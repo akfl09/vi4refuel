@@ -383,7 +383,8 @@
             timeEntries: [],
             adminPin: '0000',
             selectedEmployee: null,
-            currentView: 'clock'
+            currentView: 'clock',
+            selectedPayPeriod: 'current' // 'current', 'previous', 'all', or specific period like '2026-01-24'
         };
 
         // BC Stat Holidays 2026
@@ -392,6 +393,73 @@
             '2026-07-01', '2026-08-03', '2026-09-07', '2026-10-12',
             '2026-11-11', '2026-12-25', '2026-12-26'
         ];
+
+        // Pay Period Functions
+        function getPayPeriod(date) {
+            const d = new Date(date);
+            const day = d.getDate();
+            const month = d.getMonth();
+            const year = d.getFullYear();
+            
+            if (day >= 9 && day <= 23) {
+                // Period 1: 9th-23rd
+                return {
+                    start: new Date(year, month, 9),
+                    end: new Date(year, month, 23, 23, 59, 59),
+                    label: `${d.toLocaleString('default', { month: 'short' })} ${year} (9-23)`
+                };
+            } else if (day >= 24) {
+                // Period 2: 24th-8th of next month
+                const nextMonth = month + 1;
+                const nextYear = nextMonth > 11 ? year + 1 : year;
+                const adjustedMonth = nextMonth > 11 ? 0 : nextMonth;
+                return {
+                    start: new Date(year, month, 24),
+                    end: new Date(nextYear, adjustedMonth, 8, 23, 59, 59),
+                    label: `${d.toLocaleString('default', { month: 'short' })}-${new Date(nextYear, adjustedMonth, 1).toLocaleString('default', { month: 'short' })} ${year} (24-8)`
+                };
+            } else {
+                // Days 1-8: part of previous month's 24-8 period
+                const prevMonth = month - 1;
+                const prevYear = prevMonth < 0 ? year - 1 : year;
+                const adjustedMonth = prevMonth < 0 ? 11 : prevMonth;
+                return {
+                    start: new Date(prevYear, adjustedMonth, 24),
+                    end: new Date(year, month, 8, 23, 59, 59),
+                    label: `${new Date(prevYear, adjustedMonth, 1).toLocaleString('default', { month: 'short' })}-${d.toLocaleString('default', { month: 'short' })} ${prevYear} (24-8)`
+                };
+            }
+        }
+
+        function getCurrentPayPeriod() {
+            return getPayPeriod(new Date());
+        }
+
+        function getPreviousPayPeriods(count = 6) {
+            const periods = [];
+            let currentDate = new Date();
+            
+            for (let i = 0; i < count; i++) {
+                const period = getPayPeriod(currentDate);
+                periods.push({
+                    start: period.start,
+                    end: period.end,
+                    label: period.label,
+                    value: period.start.toISOString().split('T')[0]
+                });
+                
+                // Move to previous period
+                currentDate = new Date(period.start);
+                currentDate.setDate(currentDate.getDate() - 1);
+            }
+            
+            return periods;
+        }
+
+        function isInPayPeriod(date, period) {
+            const d = new Date(date);
+            return d >= period.start && d <= period.end;
+        }
 
         // ============================================
         // FIREBASE FUNCTIONS
@@ -846,10 +914,43 @@
 
         // Timesheet View
         function renderTimesheetView() {
-            const visibleEntries = state.isAdmin ? state.timeEntries : state.timeEntries.filter(e => e.employeeId === state.currentUser.id);
+            const periods = getPreviousPayPeriods();
+            const currentPeriod = getCurrentPayPeriod();
+            
+            const periodOptions = [
+                { value: 'current', label: `Current: ${currentPeriod.label}` },
+                ...periods.map(p => ({ value: p.value, label: p.label })),
+                { value: 'all', label: 'All Time' }
+            ];
+            
+            const periodDropdown = `
+                <div style="margin-bottom: 20px;">
+                    <label>Pay Period</label>
+                    <select id="timesheetPeriodSelect" onchange="changeTimesheetPeriod(this.value)" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 16px;">
+                        ${periodOptions.map(opt => `
+                            <option value="${opt.value}" ${state.selectedPayPeriod === opt.value ? 'selected' : ''}>
+                                ${opt.label}
+                            </option>
+                        `).join('')}
+                    </select>
+                </div>
+            `;
+            
+            let visibleEntries = state.isAdmin ? state.timeEntries : state.timeEntries.filter(e => e.employeeId === state.currentUser.id);
+            
+            // Filter by pay period
+            if (state.selectedPayPeriod !== 'all') {
+                let period;
+                if (state.selectedPayPeriod === 'current') {
+                    period = currentPeriod;
+                } else {
+                    period = getPayPeriod(new Date(state.selectedPayPeriod));
+                }
+                visibleEntries = visibleEntries.filter(e => isInPayPeriod(e.clockIn, period));
+            }
             
             if (visibleEntries.length === 0) {
-                document.getElementById('timesheetTable').innerHTML = '<p class="subtitle text-center">No time entries yet</p>';
+                document.getElementById('timesheetTable').innerHTML = periodDropdown + '<p class="subtitle text-center">No time entries for this period</p>';
                 return;
             }
             
@@ -870,7 +971,7 @@
                 `;
             }).join('');
             
-            document.getElementById('timesheetTable').innerHTML = `
+            document.getElementById('timesheetTable').innerHTML = periodDropdown + `
                 <table>
                     <thead>
                         <tr>
@@ -887,12 +988,51 @@
             `;
         }
 
+        function changeTimesheetPeriod(value) {
+            state.selectedPayPeriod = value;
+            renderTimesheetView();
+        }
+
         // Payroll View
         function renderPayrollView() {
+            const periods = getPreviousPayPeriods();
+            const currentPeriod = getCurrentPayPeriod();
+            
+            const periodOptions = [
+                { value: 'current', label: `Current: ${currentPeriod.label}` },
+                ...periods.map(p => ({ value: p.value, label: p.label })),
+                { value: 'all', label: 'All Time' }
+            ];
+            
+            const periodDropdown = `
+                <div class="card">
+                    <label>Pay Period</label>
+                    <select id="payrollPeriodSelect" onchange="changePayrollPeriod(this.value)" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 16px;">
+                        ${periodOptions.map(opt => `
+                            <option value="${opt.value}" ${state.selectedPayPeriod === opt.value ? 'selected' : ''}>
+                                ${opt.label}
+                            </option>
+                        `).join('')}
+                    </select>
+                </div>
+            `;
+            
             const visibleEmployees = state.isAdmin ? state.employees : state.employees.filter(e => e.id === state.currentUser.id);
             
             const cards = visibleEmployees.map(emp => {
-                const entries = state.timeEntries.filter(e => e.employeeId === emp.id && e.clockOut);
+                let entries = state.timeEntries.filter(e => e.employeeId === emp.id && e.clockOut);
+                
+                // Filter by pay period
+                if (state.selectedPayPeriod !== 'all') {
+                    let period;
+                    if (state.selectedPayPeriod === 'current') {
+                        period = currentPeriod;
+                    } else {
+                        period = getPayPeriod(new Date(state.selectedPayPeriod));
+                    }
+                    entries = entries.filter(e => isInPayPeriod(e.clockIn, period));
+                }
+                
                 const totals = calculateTotals(emp, entries);
                 
                 return `
@@ -926,7 +1066,12 @@
                 `;
             }).join('');
             
-            document.getElementById('payrollContent').innerHTML = cards;
+            document.getElementById('payrollContent').innerHTML = periodDropdown + cards;
+        }
+
+        function changePayrollPeriod(value) {
+            state.selectedPayPeriod = value;
+            renderPayrollView();
         }
 
         // Settings View
