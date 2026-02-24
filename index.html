@@ -387,6 +387,8 @@
             isAdmin: false,
             employees: [],
             timeEntries: [],
+            schedules: [],        // New: shift schedules
+            timeOffRequests: [],  // New: time off requests
             adminPin: '0000',
             selectedEmployee: null,
             currentView: 'clock',
@@ -395,9 +397,16 @@
 
         // BC Stat Holidays 2026
         const statHolidays = [
-            '2026-01-01', '2026-02-09', '2026-04-03', '2026-05-18',
-            '2026-07-01', '2026-08-03', '2026-09-07', '2026-10-12',
-            '2026-11-11', '2026-12-25', '2026-12-26'
+            '2026-01-01', // New Year's Day
+            '2026-02-16', // Family Day
+            '2026-04-03', // Good Friday
+            '2026-05-18', // Victoria Day
+            '2026-07-01', // Canada Day
+            '2026-08-03', // BC Day
+            '2026-09-30', // Truth and Reconciliation Day
+            '2026-10-12', // Thanksgiving
+            '2026-11-11', // Remembrance Day
+            '2026-12-25'  // Christmas
         ];
 
         // Pay Period Functions
@@ -553,6 +562,99 @@
             }
         }
 
+        // Load schedules from Firebase
+        async function loadSchedules() {
+            try {
+                const snapshot = await db.collection('schedules').orderBy('date', 'asc').get();
+                state.schedules = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    state.schedules.push({
+                        ...data,
+                        docId: doc.id,
+                        date: data.date.toDate()
+                    });
+                });
+            } catch (error) {
+                console.error('Error loading schedules:', error);
+            }
+        }
+
+        // Load time off requests from Firebase
+        async function loadTimeOffRequests() {
+            try {
+                const snapshot = await db.collection('timeOffRequests').orderBy('requestDate', 'desc').get();
+                state.timeOffRequests = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    state.timeOffRequests.push({
+                        ...data,
+                        docId: doc.id,
+                        startDate: data.startDate.toDate(),
+                        endDate: data.endDate.toDate(),
+                        requestDate: data.requestDate.toDate()
+                    });
+                });
+            } catch (error) {
+                console.error('Error loading time off requests:', error);
+            }
+        }
+
+        // Add schedule to Firebase
+        async function addScheduleToFirebase(schedule) {
+            try {
+                const docRef = await db.collection('schedules').add({
+                    ...schedule,
+                    date: firebase.firestore.Timestamp.fromDate(schedule.date)
+                });
+                schedule.docId = docRef.id;
+                state.schedules.push(schedule);
+            } catch (error) {
+                console.error('Error adding schedule:', error);
+                alert('Error adding schedule');
+            }
+        }
+
+        // Delete schedule from Firebase
+        async function deleteScheduleFromFirebase(docId) {
+            try {
+                await db.collection('schedules').doc(docId).delete();
+                state.schedules = state.schedules.filter(s => s.docId !== docId);
+            } catch (error) {
+                console.error('Error deleting schedule:', error);
+                alert('Error deleting schedule');
+            }
+        }
+
+        // Add time off request to Firebase
+        async function addTimeOffRequestToFirebase(request) {
+            try {
+                const docRef = await db.collection('timeOffRequests').add({
+                    ...request,
+                    startDate: firebase.firestore.Timestamp.fromDate(request.startDate),
+                    endDate: firebase.firestore.Timestamp.fromDate(request.endDate),
+                    requestDate: firebase.firestore.Timestamp.fromDate(request.requestDate)
+                });
+                request.docId = docRef.id;
+                state.timeOffRequests.push(request);
+            } catch (error) {
+                console.error('Error adding time off request:', error);
+                alert('Error requesting time off');
+            }
+        }
+
+        // Update time off request status
+        async function updateTimeOffRequestStatus(docId, status) {
+            try {
+                await db.collection('timeOffRequests').doc(docId).update({ status: status });
+                const request = state.timeOffRequests.find(r => r.docId === docId);
+                request.status = status;
+            } catch (error) {
+                console.error('Error updating time off request:', error);
+                alert('Error updating request');
+            }
+        }
+
         // Add employee to Firebase
         async function addEmployeeToFirebase(employee) {
             try {
@@ -637,6 +739,8 @@
             await loadSettings();
             await loadEmployees();
             await loadTimeEntries();
+            await loadSchedules();
+            await loadTimeOffRequests();
             
             document.getElementById('app').innerHTML = `
                 <!-- Login Screen -->
@@ -674,6 +778,8 @@
                     <div class="card">
                         <div class="tabs">
                             <button class="tab active" onclick="switchTab('clock')">Clock In/Out</button>
+                            <button class="tab" onclick="switchTab('schedule')">Schedule</button>
+                            <button class="tab" onclick="switchTab('timeoff')">Time Off</button>
                             <button class="tab" onclick="switchTab('timesheet')">Timesheet</button>
                             <button class="tab" onclick="switchTab('payroll')">Hours Summary</button>
                             <button class="tab hidden" id="settingsTab" onclick="switchTab('settings')">Settings</button>
@@ -692,6 +798,22 @@
                                 <h2>Clock Action</h2>
                                 <div id="clockAction"></div>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Schedule View -->
+                    <div id="scheduleView" class="hidden">
+                        <div class="card">
+                            <h2 id="scheduleViewTitle">My Schedule</h2>
+                            <div id="scheduleContent"></div>
+                        </div>
+                    </div>
+
+                    <!-- Time Off View -->
+                    <div id="timeoffView" class="hidden">
+                        <div class="card">
+                            <h2 id="timeoffViewTitle">Time Off Requests</h2>
+                            <div id="timeoffContent"></div>
                         </div>
                     </div>
 
@@ -803,6 +925,8 @@
             event.target.classList.add('active');
             
             document.getElementById('clockView').classList.add('hidden');
+            document.getElementById('scheduleView').classList.add('hidden');
+            document.getElementById('timeoffView').classList.add('hidden');
             document.getElementById('timesheetView').classList.add('hidden');
             document.getElementById('payrollView').classList.add('hidden');
             document.getElementById('settingsView').classList.add('hidden');
@@ -814,6 +938,8 @@
         // Render current view
         function renderView() {
             if (state.currentView === 'clock') renderClockView();
+            else if (state.currentView === 'schedule') renderScheduleView();
+            else if (state.currentView === 'timeoff') renderTimeOffView();
             else if (state.currentView === 'timesheet') renderTimesheetView();
             else if (state.currentView === 'payroll') renderPayrollView();
             else if (state.currentView === 'settings') renderSettingsView();
@@ -1122,6 +1248,431 @@
         }
 
         // Settings Functions
+        async function changeAdminPin() {
+            const newPin = document.getElementById('newAdminPin').value;
+            if (!newPin || newPin.length < 4) {
+                alert('PIN must be at least 4 digits');
+                return;
+            }
+            await saveAdminPin(newPin);
+            alert('Admin PIN changed successfully!');
+            document.getElementById('newAdminPin').value = '';
+        }
+
+        async function addDriver() {
+            const name = document.getElementById('newDriverName').value;
+            const pin = document.getElementById('newDriverPin').value;
+            
+            if (!name.trim()) {
+                alert('Please enter a driver name');
+                return;
+            }
+            if (!pin || pin.length < 4) {
+                alert('PIN must be at least 4 digits');
+                return;
+            }
+            
+            const newId = state.employees.length > 0 ? Math.max(...state.employees.map(e => e.id)) + 1 : 1;
+            const newDriver = {
+                id: newId,
+                name: name.trim(),
+                status: 'clocked-out',
+                pin: pin
+            };
+            
+            await addEmployeeToFirebase(newDriver);
+            alert(`Driver ${name} added successfully!`);
+            document.getElementById('newDriverName').value = '';
+            document.getElementById('newDriverPin').value = '';
+            renderSettingsView();
+            renderLogin();
+        }
+
+        async function changeDriverPin(docId, id) {
+            const driver = state.employees.find(e => e.id === id);
+            const newPin = prompt(`Enter new PIN for ${driver.name}:`, driver.pin);
+            if (!newPin || newPin.length < 4) {
+                alert('PIN must be at least 4 digits');
+                return;
+            }
+            await updateEmployeeInFirebase(docId, { pin: newPin });
+            alert('PIN updated successfully!');
+            renderSettingsView();
+        }
+
+        async function removeDriver(docId, id, name) {
+            if (!confirm(`Are you sure you want to remove ${name}? This will also delete all their time entries.`)) {
+                return;
+            }
+            await deleteEmployeeFromFirebase(docId, id);
+            alert(`${name} has been removed.`);
+            renderSettingsView();
+            renderLogin();
+        }
+
+        // ============================================
+        // SCHEDULE VIEW
+        // ============================================
+
+        function renderScheduleView() {
+            if (state.isAdmin) {
+                renderAdminScheduleView();
+            } else {
+                renderDriverScheduleView();
+            }
+        }
+
+        function renderAdminScheduleView() {
+            document.getElementById('scheduleViewTitle').textContent = 'Manage Schedules';
+            
+            const today = new Date();
+            const fourWeeksOut = new Date(today);
+            fourWeeksOut.setDate(fourWeeksOut.getDate() + 28);
+            
+            // Create schedule form
+            const scheduleForm = `
+                <div style="margin-bottom: 24px; padding: 20px; background: #f7fafc; border-radius: 8px;">
+                    <h3 style="margin-bottom: 16px;">Add Schedule</h3>
+                    <div class="grid grid-2">
+                        <div>
+                            <label>Employee</label>
+                            <select id="scheduleEmployee" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                                ${state.employees.map(emp => `<option value="${emp.id}">${emp.name}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label>Date</label>
+                            <input type="date" id="scheduleDate" min="${today.toISOString().split('T')[0]}" max="${fourWeeksOut.toISOString().split('T')[0]}" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                        </div>
+                        <div>
+                            <label>Shift Type</label>
+                            <select id="scheduleShiftType" onchange="updateShiftTimes()" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                                <option value="day">Day Shift (8:00 AM - 4:00 PM)</option>
+                                <option value="evening">Evening Shift (4:00 PM - 12:00 AM)</option>
+                                <option value="custom">Custom Times</option>
+                            </select>
+                        </div>
+                        <div id="customTimesDiv" class="hidden">
+                            <label>Start - End Time</label>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="time" id="scheduleStartTime" style="flex: 1; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                                <input type="time" id="scheduleEndTime" style="flex: 1; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-success" onclick="addSchedule()" style="margin-top: 16px;">Add to Schedule</button>
+                </div>
+            `;
+            
+            // Display upcoming schedules
+            const upcomingSchedules = state.schedules
+                .filter(s => s.date >= today)
+                .sort((a, b) => a.date - b.date);
+            
+            const groupedSchedules = {};
+            upcomingSchedules.forEach(sched => {
+                const dateKey = sched.date.toISOString().split('T')[0];
+                if (!groupedSchedules[dateKey]) groupedSchedules[dateKey] = [];
+                groupedSchedules[dateKey].push(sched);
+            });
+            
+            const schedulesList = Object.keys(groupedSchedules).length === 0 
+                ? '<p class="subtitle text-center">No schedules created yet</p>'
+                : Object.keys(groupedSchedules).sort().map(dateKey => {
+                    const date = new Date(dateKey);
+                    const schedules = groupedSchedules[dateKey];
+                    
+                    return `
+                        <div style="margin-bottom: 20px;">
+                            <h3 style="color: #667eea; margin-bottom: 12px;">
+                                ${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                            </h3>
+                            <div class="grid" style="gap: 12px;">
+                                ${schedules.map(sched => {
+                                    const emp = state.employees.find(e => e.id === sched.employeeId);
+                                    return `
+                                        <div class="driver-card" style="display: flex; justify-content: space-between; align-items: center;">
+                                            <div>
+                                                <div class="driver-name">${emp ? emp.name : 'Unknown'}</div>
+                                                <div class="subtitle">${sched.shiftType === 'day' ? 'Day Shift' : sched.shiftType === 'evening' ? 'Evening Shift' : 'Custom'}: ${sched.startTime} - ${sched.endTime}</div>
+                                            </div>
+                                            <button class="btn btn-danger" onclick="deleteSchedule('${sched.docId}')">Delete</button>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            
+            document.getElementById('scheduleContent').innerHTML = scheduleForm + schedulesList;
+        }
+
+        function updateShiftTimes() {
+            const shiftType = document.getElementById('scheduleShiftType').value;
+            const customDiv = document.getElementById('customTimesDiv');
+            
+            if (shiftType === 'custom') {
+                customDiv.classList.remove('hidden');
+            } else {
+                customDiv.classList.add('hidden');
+            }
+        }
+
+        async function addSchedule() {
+            const employeeId = parseInt(document.getElementById('scheduleEmployee').value);
+            const dateStr = document.getElementById('scheduleDate').value;
+            const shiftType = document.getElementById('scheduleShiftType').value;
+            
+            if (!dateStr) {
+                alert('Please select a date');
+                return;
+            }
+            
+            let startTime, endTime;
+            if (shiftType === 'day') {
+                startTime = '08:00';
+                endTime = '16:00';
+            } else if (shiftType === 'evening') {
+                startTime = '16:00';
+                endTime = '00:00';
+            } else {
+                startTime = document.getElementById('scheduleStartTime').value;
+                endTime = document.getElementById('scheduleEndTime').value;
+                if (!startTime || !endTime) {
+                    alert('Please enter start and end times');
+                    return;
+                }
+            }
+            
+            const employee = state.employees.find(e => e.id === employeeId);
+            const schedule = {
+                employeeId: employeeId,
+                employeeName: employee.name,
+                date: new Date(dateStr + 'T12:00:00'),
+                shiftType: shiftType,
+                startTime: startTime,
+                endTime: endTime
+            };
+            
+            await addScheduleToFirebase(schedule);
+            alert('Schedule added successfully!');
+            renderScheduleView();
+        }
+
+        async function deleteSchedule(docId) {
+            if (!confirm('Delete this schedule?')) return;
+            await deleteScheduleFromFirebase(docId);
+            renderScheduleView();
+        }
+
+        function renderDriverScheduleView() {
+            document.getElementById('scheduleViewTitle').textContent = 'My Schedule';
+            
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            const mySchedules = state.schedules
+                .filter(s => s.employeeId === state.currentUser.id && s.date >= today)
+                .sort((a, b) => a.date - b.date);
+            
+            if (mySchedules.length === 0) {
+                document.getElementById('scheduleContent').innerHTML = '<p class="subtitle text-center">No upcoming shifts scheduled</p>';
+                return;
+            }
+            
+            const scheduleList = mySchedules.map(sched => {
+                const date = sched.date;
+                const isToday = date.toDateString() === new Date().toDateString();
+                
+                return `
+                    <div class="driver-card" style="border-left: 4px solid ${isToday ? '#48bb78' : '#667eea'};">
+                        <div>
+                            <div class="driver-name">
+                                ${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                                ${isToday ? '<span style="color: #48bb78; margin-left: 8px;">(Today)</span>' : ''}
+                            </div>
+                            <div class="subtitle">
+                                ${sched.shiftType === 'day' ? 'Day Shift' : sched.shiftType === 'evening' ? 'Evening Shift' : 'Custom'}: 
+                                ${sched.startTime} - ${sched.endTime}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            document.getElementById('scheduleContent').innerHTML = scheduleList;
+        }
+
+        // ============================================
+        // TIME OFF VIEW
+        // ============================================
+
+        function renderTimeOffView() {
+            if (state.isAdmin) {
+                renderAdminTimeOffView();
+            } else {
+                renderDriverTimeOffView();
+            }
+        }
+
+        function renderAdminTimeOffView() {
+            document.getElementById('timeoffViewTitle').textContent = 'Time Off Requests';
+            
+            const pendingRequests = state.timeOffRequests.filter(r => r.status === 'pending');
+            const otherRequests = state.timeOffRequests.filter(r => r.status !== 'pending');
+            
+            const pendingSection = pendingRequests.length === 0
+                ? '<p class="subtitle">No pending requests</p>'
+                : pendingRequests.map(req => {
+                    const emp = state.employees.find(e => e.id === req.employeeId);
+                    return `
+                        <div class="driver-card">
+                            <div style="flex: 1;">
+                                <div class="driver-name">${emp ? emp.name : 'Unknown'}</div>
+                                <div class="subtitle">
+                                    ${req.startDate.toLocaleDateString()} - ${req.endDate.toLocaleDateString()}
+                                    <br>Type: ${req.type === 'vacation' ? 'Vacation' : 'Sick Day'}
+                                    ${req.notes ? `<br>Notes: ${req.notes}` : ''}
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-success" onclick="approveTimeOff('${req.docId}')">Approve</button>
+                                <button class="btn btn-danger" onclick="denyTimeOff('${req.docId}')">Deny</button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            
+            const otherSection = otherRequests.length === 0
+                ? ''
+                : `
+                    <h3 style="margin-top: 24px; margin-bottom: 12px;">Recent Requests</h3>
+                    ${otherRequests.slice(0, 10).map(req => {
+                        const emp = state.employees.find(e => e.id === req.employeeId);
+                        const statusColor = req.status === 'approved' ? '#48bb78' : '#f56565';
+                        return `
+                            <div class="driver-card">
+                                <div>
+                                    <div class="driver-name">${emp ? emp.name : 'Unknown'}</div>
+                                    <div class="subtitle">
+                                        ${req.startDate.toLocaleDateString()} - ${req.endDate.toLocaleDateString()}
+                                        <br>Type: ${req.type === 'vacation' ? 'Vacation' : 'Sick Day'}
+                                        <br><span style="color: ${statusColor}; font-weight: 600;">${req.status.toUpperCase()}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                `;
+            
+            document.getElementById('timeoffContent').innerHTML = `
+                <h3 style="margin-bottom: 12px;">Pending Requests</h3>
+                ${pendingSection}
+                ${otherSection}
+            `;
+        }
+
+        async function approveTimeOff(docId) {
+            await updateTimeOffRequestStatus(docId, 'approved');
+            renderTimeOffView();
+        }
+
+        async function denyTimeOff(docId) {
+            await updateTimeOffRequestStatus(docId, 'denied');
+            renderTimeOffView();
+        }
+
+        function renderDriverTimeOffView() {
+            document.getElementById('timeoffViewTitle').textContent = 'My Time Off';
+            
+            // Request form
+            const requestForm = `
+                <div style="margin-bottom: 24px; padding: 20px; background: #f7fafc; border-radius: 8px;">
+                    <h3 style="margin-bottom: 16px;">Request Time Off</h3>
+                    <div class="grid grid-2">
+                        <div>
+                            <label>Start Date</label>
+                            <input type="date" id="timeoffStartDate" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                        </div>
+                        <div>
+                            <label>End Date</label>
+                            <input type="date" id="timeoffEndDate" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                        </div>
+                    </div>
+                    <div style="margin-top: 12px;">
+                        <label>Type</label>
+                        <select id="timeoffType" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                            <option value="vacation">Vacation</option>
+                            <option value="sick">Sick Day</option>
+                        </select>
+                    </div>
+                    <div style="margin-top: 12px;">
+                        <label>Notes (optional)</label>
+                        <input type="text" id="timeoffNotes" placeholder="Any additional notes..." style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                    </div>
+                    <button class="btn btn-success" onclick="submitTimeOffRequest()" style="margin-top: 16px;">Submit Request</button>
+                </div>
+            `;
+            
+            // My requests
+            const myRequests = state.timeOffRequests.filter(r => r.employeeId === state.currentUser.id);
+            
+            const requestsList = myRequests.length === 0
+                ? '<p class="subtitle text-center">No time off requests yet</p>'
+                : myRequests.map(req => {
+                    const statusColor = req.status === 'pending' ? '#667eea' : req.status === 'approved' ? '#48bb78' : '#f56565';
+                    return `
+                        <div class="driver-card">
+                            <div>
+                                <div class="driver-name">${req.startDate.toLocaleDateString()} - ${req.endDate.toLocaleDateString()}</div>
+                                <div class="subtitle">
+                                    Type: ${req.type === 'vacation' ? 'Vacation' : 'Sick Day'}
+                                    ${req.notes ? `<br>Notes: ${req.notes}` : ''}
+                                    <br><span style="color: ${statusColor}; font-weight: 600;">${req.status.toUpperCase()}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            
+            document.getElementById('timeoffContent').innerHTML = requestForm + '<h3 style="margin-bottom: 12px;">My Requests</h3>' + requestsList;
+        }
+
+        async function submitTimeOffRequest() {
+            const startDate = document.getElementById('timeoffStartDate').value;
+            const endDate = document.getElementById('timeoffEndDate').value;
+            const type = document.getElementById('timeoffType').value;
+            const notes = document.getElementById('timeoffNotes').value;
+            
+            if (!startDate || !endDate) {
+                alert('Please select start and end dates');
+                return;
+            }
+            
+            if (new Date(startDate) > new Date(endDate)) {
+                alert('End date must be after start date');
+                return;
+            }
+            
+            const request = {
+                employeeId: state.currentUser.id,
+                employeeName: state.currentUser.name,
+                startDate: new Date(startDate + 'T12:00:00'),
+                endDate: new Date(endDate + 'T12:00:00'),
+                type: type,
+                notes: notes,
+                status: 'pending',
+                requestDate: new Date()
+            };
+            
+            await addTimeOffRequestToFirebase(request);
+            alert('Time off request submitted!');
+            document.getElementById('timeoffStartDate').value = '';
+            document.getElementById('timeoffEndDate').value = '';
+            document.getElementById('timeoffNotes').value = '';
+            renderTimeOffView();
+        }
         async function changeAdminPin() {
             const newPin = document.getElementById('newAdminPin').value;
             if (!newPin || newPin.length < 4) {
