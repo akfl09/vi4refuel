@@ -418,36 +418,30 @@
             
             if (day >= 9 && day <= 23) {
                 // Period 1: 9th-23rd
-                const start = new Date(year, month, 9);
-                const end = new Date(year, month, 23, 23, 59, 59);
                 return {
-                    start: start,
-                    end: end,
-                    label: `${start.toLocaleString('default', { month: 'short' })} 9-23, ${year}`
+                    start: new Date(year, month, 9),
+                    end: new Date(year, month, 23, 23, 59, 59),
+                    label: `${d.toLocaleString('default', { month: 'short' })} ${year} (9-23)`
                 };
             } else if (day >= 24) {
                 // Period 2: 24th-8th of next month
                 const nextMonth = month + 1;
                 const nextYear = nextMonth > 11 ? year + 1 : year;
                 const adjustedMonth = nextMonth > 11 ? 0 : nextMonth;
-                const start = new Date(year, month, 24);
-                const end = new Date(nextYear, adjustedMonth, 8, 23, 59, 59);
                 return {
-                    start: start,
-                    end: end,
-                    label: `${start.toLocaleString('default', { month: 'short' })} 24 - ${end.toLocaleString('default', { month: 'short' })} 8, ${year}`
+                    start: new Date(year, month, 24),
+                    end: new Date(nextYear, adjustedMonth, 8, 23, 59, 59),
+                    label: `${d.toLocaleString('default', { month: 'short' })}-${new Date(nextYear, adjustedMonth, 1).toLocaleString('default', { month: 'short' })} ${year} (24-8)`
                 };
             } else {
                 // Days 1-8: part of previous month's 24-8 period
                 const prevMonth = month - 1;
                 const prevYear = prevMonth < 0 ? year - 1 : year;
                 const adjustedMonth = prevMonth < 0 ? 11 : prevMonth;
-                const start = new Date(prevYear, adjustedMonth, 24);
-                const end = new Date(year, month, 8, 23, 59, 59);
                 return {
-                    start: start,
-                    end: end,
-                    label: `${start.toLocaleString('default', { month: 'short' })} 24 - ${end.toLocaleString('default', { month: 'short' })} 8, ${prevYear}`
+                    start: new Date(prevYear, adjustedMonth, 24),
+                    end: new Date(year, month, 8, 23, 59, 59),
+                    label: `${new Date(prevYear, adjustedMonth, 1).toLocaleString('default', { month: 'short' })}-${d.toLocaleString('default', { month: 'short' })} ${prevYear} (24-8)`
                 };
             }
         }
@@ -458,11 +452,7 @@
 
         function getPreviousPayPeriods(count = 6) {
             const periods = [];
-            const currentPeriod = getPayPeriod(new Date());
-            
-            // Start from the day before current period to get the previous period
-            let currentDate = new Date(currentPeriod.start);
-            currentDate.setDate(currentDate.getDate() - 1);
+            let currentDate = new Date();
             
             for (let i = 0; i < count; i++) {
                 const period = getPayPeriod(currentDate);
@@ -1078,34 +1068,6 @@
                 </div>
             `;
             
-            // Admin manual entry form
-            const manualEntryForm = state.isAdmin ? `
-                <div style="margin-bottom: 20px; padding: 20px; background: #f7fafc; border-radius: 8px;">
-                    <h3 style="margin-bottom: 16px;">Add Manual Entry</h3>
-                    <div class="grid grid-2">
-                        <div>
-                            <label>Employee</label>
-                            <select id="manualEmployee" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
-                                ${state.employees.map(emp => `<option value="${emp.id}">${emp.name}</option>`).join('')}
-                            </select>
-                        </div>
-                        <div>
-                            <label>Date</label>
-                            <input type="date" id="manualDate" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
-                        </div>
-                        <div>
-                            <label>Clock In Time</label>
-                            <input type="time" id="manualClockIn" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
-                        </div>
-                        <div>
-                            <label>Clock Out Time</label>
-                            <input type="time" id="manualClockOut" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
-                        </div>
-                    </div>
-                    <button class="btn btn-success" onclick="addManualEntry()" style="margin-top: 16px;">Add Entry</button>
-                </div>
-            ` : '';
-            
             let visibleEntries = state.isAdmin ? state.timeEntries : state.timeEntries.filter(e => e.employeeId === state.currentUser.id);
             
             // Filter by pay period
@@ -1120,7 +1082,7 @@
             }
             
             if (visibleEntries.length === 0) {
-                document.getElementById('timesheetTable').innerHTML = periodDropdown + manualEntryForm + '<p class="subtitle text-center">No time entries for this period</p>';
+                document.getElementById('timesheetTable').innerHTML = periodDropdown + '<p class="subtitle text-center">No time entries for this period</p>';
                 return;
             }
             
@@ -1128,13 +1090,6 @@
                 const clockIn = entry.clockIn;
                 const clockOut = entry.clockOut;
                 const duration = clockOut ? formatDuration(clockIn, clockOut) : 'In Progress';
-                
-                const adminButtons = state.isAdmin ? `
-                    <td>
-                        <button class="btn btn-primary" style="padding: 6px 12px; font-size: 14px; margin-right: 4px;" onclick="editTimeEntry('${entry.docId}')">Edit</button>
-                        <button class="btn btn-danger" style="padding: 6px 12px; font-size: 14px;" onclick="deleteTimeEntry('${entry.docId}')">Delete</button>
-                    </td>
-                ` : '';
                 
                 return `
                     <tr>
@@ -1144,12 +1099,11 @@
                         <td>${clockOut ? clockOut.toLocaleString() : '<span style="color: #48bb78; font-weight: 600;">In Progress</span>'}</td>
                         <td>${entry.clockOutLocation ? formatLocation(entry.clockOutLocation) : 'N/A'}</td>
                         <td><strong>${duration}</strong></td>
-                        ${adminButtons}
                     </tr>
                 `;
             }).join('');
             
-            document.getElementById('timesheetTable').innerHTML = periodDropdown + manualEntryForm + `
+            document.getElementById('timesheetTable').innerHTML = periodDropdown + `
                 <table>
                     <thead>
                         <tr>
@@ -1159,7 +1113,6 @@
                             <th>Clock Out</th>
                             <th>Clock Out Location</th>
                             <th>Duration</th>
-                            ${state.isAdmin ? '<th>Actions</th>' : ''}
                         </tr>
                     </thead>
                     <tbody>${rows}</tbody>
@@ -1170,99 +1123,6 @@
         function changeTimesheetPeriod(value) {
             state.selectedPayPeriod = value;
             renderTimesheetView();
-        }
-
-        // Manual entry functions
-        async function addManualEntry() {
-            const employeeId = parseInt(document.getElementById('manualEmployee').value);
-            const date = document.getElementById('manualDate').value;
-            const clockInTime = document.getElementById('manualClockIn').value;
-            const clockOutTime = document.getElementById('manualClockOut').value;
-            
-            if (!date || !clockInTime || !clockOutTime) {
-                alert('Please fill in all fields');
-                return;
-            }
-            
-            const employee = state.employees.find(e => e.id === employeeId);
-            
-            const clockInDate = new Date(date + 'T' + clockInTime);
-            const clockOutDate = new Date(date + 'T' + clockOutTime);
-            
-            // Handle overnight shifts
-            if (clockOutDate < clockInDate) {
-                clockOutDate.setDate(clockOutDate.getDate() + 1);
-            }
-            
-            const entry = {
-                id: Date.now(),
-                employeeId: employeeId,
-                employeeName: employee.name,
-                clockIn: clockInDate,
-                clockInLocation: { latitude: 0, longitude: 0 }, // Manual entry marker
-                clockOut: clockOutDate,
-                clockOutLocation: { latitude: 0, longitude: 0 }
-            };
-            
-            await addTimeEntryToFirebase(entry);
-            alert('Manual entry added successfully!');
-            document.getElementById('manualDate').value = '';
-            document.getElementById('manualClockIn').value = '';
-            document.getElementById('manualClockOut').value = '';
-            renderTimesheetView();
-        }
-
-        async function editTimeEntry(docId) {
-            const entry = state.timeEntries.find(e => e.docId === docId);
-            if (!entry) return;
-            
-            // Create edit dialog
-            const clockInStr = entry.clockIn.toISOString().slice(0, 16);
-            const clockOutStr = entry.clockOut ? entry.clockOut.toISOString().slice(0, 16) : '';
-            
-            const newClockIn = prompt(`Edit Clock In time for ${entry.employeeName}:\n\nFormat: YYYY-MM-DD HH:MM`, clockInStr.replace('T', ' '));
-            if (!newClockIn) return;
-            
-            const newClockOut = prompt(`Edit Clock Out time for ${entry.employeeName}:\n\nFormat: YYYY-MM-DD HH:MM`, clockOutStr.replace('T', ' '));
-            if (!newClockOut) return;
-            
-            try {
-                const updatedClockIn = new Date(newClockIn.replace(' ', 'T'));
-                const updatedClockOut = new Date(newClockOut.replace(' ', 'T'));
-                
-                if (isNaN(updatedClockIn.getTime()) || isNaN(updatedClockOut.getTime())) {
-                    alert('Invalid date format');
-                    return;
-                }
-                
-                await updateTimeEntryInFirebase(docId, {
-                    clockIn: updatedClockIn,
-                    clockOut: updatedClockOut
-                });
-                
-                alert('Time entry updated!');
-                renderTimesheetView();
-            } catch (error) {
-                alert('Error updating entry: ' + error.message);
-            }
-        }
-
-        async function deleteTimeEntry(docId) {
-            const entry = state.timeEntries.find(e => e.docId === docId);
-            if (!entry) return;
-            
-            if (!confirm(`Delete this time entry for ${entry.employeeName}?\n\nClock In: ${entry.clockIn.toLocaleString()}\nClock Out: ${entry.clockOut ? entry.clockOut.toLocaleString() : 'In Progress'}`)) {
-                return;
-            }
-            
-            try {
-                await db.collection('timeEntries').doc(docId).delete();
-                state.timeEntries = state.timeEntries.filter(e => e.docId !== docId);
-                alert('Time entry deleted!');
-                renderTimesheetView();
-            } catch (error) {
-                alert('Error deleting entry: ' + error.message);
-            }
         }
 
         // Payroll View
