@@ -470,7 +470,7 @@
                     start: period.start,
                     end: period.end,
                     label: period.label,
-                    value: `${period.start.toISOString().split('T')[0]}_${period.end.toISOString().split('T')[0]}`
+                    value: period.start.toISOString().split('T')[0]
                 });
                 
                 // Move to previous period
@@ -1114,12 +1114,7 @@
                 if (state.selectedPayPeriod === 'current') {
                     period = currentPeriod;
                 } else {
-                    // Parse the stored period value (format: "startDate_endDate")
-                    const [startStr, endStr] = state.selectedPayPeriod.split('_');
-                    period = {
-                        start: new Date(startStr + 'T00:00:00'),
-                        end: new Date(endStr + 'T23:59:59')
-                    };
+                    period = getPayPeriod(new Date(state.selectedPayPeriod));
                 }
                 visibleEntries = visibleEntries.filter(e => isInPayPeriod(e.clockIn, period));
             }
@@ -1305,12 +1300,7 @@
                     if (state.selectedPayPeriod === 'current') {
                         period = currentPeriod;
                     } else {
-                        // Parse the stored period value (format: "startDate_endDate")
-                        const [startStr, endStr] = state.selectedPayPeriod.split('_');
-                        period = {
-                            start: new Date(startStr + 'T00:00:00'),
-                            end: new Date(endStr + 'T23:59:59')
-                        };
+                        period = getPayPeriod(new Date(state.selectedPayPeriod));
                     }
                     entries = entries.filter(e => isInPayPeriod(e.clockIn, period));
                 }
