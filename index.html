@@ -181,6 +181,7 @@
             gap: 8px;
             margin-bottom: 20px;
             flex-wrap: wrap;
+            overflow-x: auto;
         }
         
         .tab {
@@ -2301,6 +2302,10 @@
         }
 
         function renderAdminOtBankView() {
+            if (!state.isAdmin) {
+                renderDriverOtBankView();
+                return;
+            }
             const banked = state.employees.filter(e => e.otBankEnabled);
 
             const balanceCards = banked.length === 0
