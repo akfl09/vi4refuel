@@ -389,6 +389,7 @@
             timeEntries: [],
             schedules: [],        // New: shift schedules
             timeOffRequests: [],  // New: time off requests
+            otBank: [],           // OT banking transactions
             adminPin: '0000',
             selectedEmployee: null,
             currentView: 'clock',
@@ -530,15 +531,15 @@
                 // If no employees, create defaults
                 if (state.employees.length === 0) {
                     const defaultEmployees = [
-                        { id: 1, name: 'Ian Laird', status: 'clocked-out', pin: '1111' },
-                        { id: 2, name: 'Logan Deschenes', status: 'clocked-out', pin: '2222' },
-                        { id: 3, name: 'Darin Kourie', status: 'clocked-out', pin: '3333' },
-                        { id: 4, name: 'Cole Melvin', status: 'clocked-out', pin: '4444' },
-                        { id: 5, name: 'Hillis Halbert', status: 'clocked-out', pin: '5555' },
-                        { id: 6, name: 'Julie Dann', status: 'clocked-out', pin: '6666' },
-                        { id: 7, name: 'Ryan King', status: 'clocked-out', pin: '7777' },
-                        { id: 8, name: 'Jamie Roy', status: 'clocked-out', pin: '8888' },
-                        { id: 9, name: 'Adrian Langereis', status: 'clocked-out', pin: '9191' }
+                        { id: 1, name: 'Ian Laird', status: 'clocked-out', pin: '1111', otBankEnabled: false },
+                        { id: 2, name: 'Logan Deschenes', status: 'clocked-out', pin: '2222', otBankEnabled: false },
+                        { id: 3, name: 'Darin Kourie', status: 'clocked-out', pin: '3333', otBankEnabled: false },
+                        { id: 4, name: 'Cole Melvin', status: 'clocked-out', pin: '4444', otBankEnabled: false },
+                        { id: 5, name: 'Hillis Halbert', status: 'clocked-out', pin: '5555', otBankEnabled: false },
+                        { id: 6, name: 'Julie Dann', status: 'clocked-out', pin: '6666', otBankEnabled: false },
+                        { id: 7, name: 'Ryan King', status: 'clocked-out', pin: '7777', otBankEnabled: false },
+                        { id: 8, name: 'Jamie Roy', status: 'clocked-out', pin: '8888', otBankEnabled: false },
+                        { id: 9, name: 'Adrian Langereis', status: 'clocked-out', pin: '9191', otBankEnabled: false }
                     ];
 
                     for (const emp of defaultEmployees) {
@@ -605,6 +606,54 @@
                 });
             } catch (error) {
                 console.error('Error loading time off requests:', error);
+            }
+        }
+
+        // Load OT bank transactions from Firebase
+        async function loadOtBank() {
+            try {
+                const snapshot = await db.collection('otBank').orderBy('requestDate', 'desc').get();
+                state.otBank = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    state.otBank.push({
+                        ...data,
+                        docId: doc.id,
+                        requestDate: data.requestDate.toDate(),
+                        payPeriodStart: data.payPeriodStart ? data.payPeriodStart.toDate() : null
+                    });
+                });
+            } catch (error) {
+                console.error('Error loading OT bank:', error);
+            }
+        }
+
+        // Add OT bank request (deposit or withdrawal) to Firebase
+        async function addOtBankRequestToFirebase(request) {
+            try {
+                const payload = {
+                    ...request,
+                    requestDate: firebase.firestore.Timestamp.fromDate(request.requestDate),
+                    payPeriodStart: request.payPeriodStart ? firebase.firestore.Timestamp.fromDate(request.payPeriodStart) : null
+                };
+                const docRef = await db.collection('otBank').add(payload);
+                request.docId = docRef.id;
+                state.otBank.unshift(request);
+            } catch (error) {
+                console.error('Error adding OT bank request:', error);
+                alert('Error submitting OT banking request');
+            }
+        }
+
+        // Approve / deny OT bank request
+        async function updateOtBankRequestStatus(docId, status) {
+            try {
+                await db.collection('otBank').doc(docId).update({ status: status });
+                const req = state.otBank.find(r => r.docId === docId);
+                if (req) req.status = status;
+            } catch (error) {
+                console.error('Error updating OT bank request:', error);
+                alert('Error updating request');
             }
         }
 
@@ -763,7 +812,8 @@
             await loadTimeEntries();
             await loadSchedules();
             await loadTimeOffRequests();
-            
+            await loadOtBank();
+
             document.getElementById('app').innerHTML = `
                 <!-- Login Screen -->
                 <div id="loginScreen">
@@ -804,6 +854,7 @@
                             <button class="tab" onclick="switchTab('timeoff')">Time Off</button>
                             <button class="tab" onclick="switchTab('timesheet')">Timesheet</button>
                             <button class="tab" onclick="switchTab('payroll')">Hours Summary</button>
+                            <button class="tab hidden" id="otbankTab" onclick="switchTab('otbank')">OT Bank</button>
                             <button class="tab hidden" id="settingsTab" onclick="switchTab('settings')">Settings</button>
                         </div>
                     </div>
@@ -850,6 +901,11 @@
                     <!-- Payroll View -->
                     <div id="payrollView" class="hidden">
                         <div id="payrollContent"></div>
+                    </div>
+
+                    <!-- OT Bank View -->
+                    <div id="otbankView" class="hidden">
+                        <div id="otbankContent"></div>
                     </div>
 
                     <!-- Settings View -->
@@ -926,8 +982,13 @@
             if (state.isAdmin) {
                 document.getElementById('settingsTab').classList.remove('hidden');
                 document.getElementById('driverSectionTitle').textContent = 'Select Employee';
+                document.getElementById('otbankTab').classList.remove('hidden');
+            } else if (state.currentUser && state.currentUser.otBankEnabled) {
+                document.getElementById('otbankTab').classList.remove('hidden');
+            } else {
+                document.getElementById('otbankTab').classList.add('hidden');
             }
-            
+
             renderView();
         }
 
@@ -951,6 +1012,7 @@
             document.getElementById('timeoffView').classList.add('hidden');
             document.getElementById('timesheetView').classList.add('hidden');
             document.getElementById('payrollView').classList.add('hidden');
+            document.getElementById('otbankView').classList.add('hidden');
             document.getElementById('settingsView').classList.add('hidden');
             
             document.getElementById(tab + 'View').classList.remove('hidden');
@@ -964,6 +1026,7 @@
             else if (state.currentView === 'timeoff') renderTimeOffView();
             else if (state.currentView === 'timesheet') renderTimesheetView();
             else if (state.currentView === 'payroll') renderPayrollView();
+            else if (state.currentView === 'otbank') renderOtBankView();
             else if (state.currentView === 'settings') renderSettingsView();
         }
 
@@ -1346,7 +1409,33 @@
                 }
                 
                 const totals = calculateTotals(emp, entries);
-                
+
+                // Approved banked-OT deposits matched to the selected pay period
+                const bankedDepositsForPeriod = state.otBank.filter(b =>
+                    b.type === 'deposit' &&
+                    b.status === 'approved' &&
+                    b.employeeId === emp.id &&
+                    state.selectedPayPeriod !== 'all' &&
+                    b.payPeriodStart &&
+                    isSameDay(b.payPeriodStart, state.selectedPayPeriod === 'current' ? currentPeriod.start : getPayPeriod(new Date(state.selectedPayPeriod)).start)
+                );
+                const bankedRawOt = bankedDepositsForPeriod
+                    .filter(b => Math.abs(b.multiplier - 1.5) < 0.001)
+                    .reduce((s, b) => s + b.rawHours, 0);
+                const bankedRawDt = bankedDepositsForPeriod
+                    .filter(b => Math.abs(b.multiplier - 2.0) < 0.001)
+                    .reduce((s, b) => s + b.rawHours, 0);
+                const netOt = totals.overtimeHours - bankedRawOt;
+                const netDt = totals.doubleTimeHours - bankedRawDt;
+
+                const bankedLines = (bankedRawOt > 0 || bankedRawDt > 0) ? `
+                    <div style="margin-top: 12px; padding: 10px 14px; background: #fef5e7; border-left: 4px solid #ed8936; border-radius: 6px;">
+                        <div style="font-weight: 600; color: #7d6608; margin-bottom: 4px;">Banked to OT Bank</div>
+                        ${bankedRawOt > 0 ? `<div style="color: #7d6608;">Banked OT: -${bankedRawOt.toFixed(2)} hrs</div>` : ''}
+                        ${bankedRawDt > 0 ? `<div style="color: #7d6608;">Banked DT: -${bankedRawDt.toFixed(2)} hrs</div>` : ''}
+                    </div>
+                ` : '';
+
                 return `
                     <div class="card">
                         <div class="header">
@@ -1363,17 +1452,20 @@
                             </div>
                             <div class="pay-card overtime">
                                 <div class="pay-label">Overtime Hours (1.5x)</div>
-                                <div class="pay-amount">${totals.overtimeHours.toFixed(2)}</div>
+                                <div class="pay-amount">${netOt.toFixed(2)}</div>
+                                ${bankedRawOt > 0 ? `<div class="subtitle" style="margin-top: 4px;">${totals.overtimeHours.toFixed(2)} earned − ${bankedRawOt.toFixed(2)} banked</div>` : ''}
                             </div>
                             <div class="pay-card doubletime">
                                 <div class="pay-label">Double Time Hours (2x)</div>
-                                <div class="pay-amount">${totals.doubleTimeHours.toFixed(2)}</div>
+                                <div class="pay-amount">${netDt.toFixed(2)}</div>
+                                ${bankedRawDt > 0 ? `<div class="subtitle" style="margin-top: 4px;">${totals.doubleTimeHours.toFixed(2)} earned − ${bankedRawDt.toFixed(2)} banked</div>` : ''}
                             </div>
                             <div class="pay-card stat">
                                 <div class="pay-label">Stat Holiday Hours</div>
                                 <div class="pay-amount">${totals.statHolidayHours.toFixed(2)}</div>
                             </div>
                         </div>
+                        ${bankedLines}
                     </div>
                 `;
             }).join('');
@@ -1394,9 +1486,10 @@
                 <div class="driver-card">
                     <div>
                         <div class="driver-name">${emp.name}</div>
-                        <div class="subtitle">PIN: ${emp.pin}</div>
+                        <div class="subtitle">PIN: ${emp.pin} · OT Banking: ${emp.otBankEnabled ? '<span style="color:#48bb78; font-weight:600;">Enabled</span>' : '<span style="color:#a0aec0; font-weight:600;">Disabled</span>'}</div>
                     </div>
                     <div>
+                        <button class="btn ${emp.otBankEnabled ? 'btn-secondary' : 'btn-success'}" style="margin-right: 8px;" onclick="toggleOtBankEnabled('${emp.docId}', ${emp.id})">${emp.otBankEnabled ? 'Disable OT Banking' : 'Enable OT Banking'}</button>
                         <button class="btn btn-primary" style="margin-right: 8px;" onclick="changeDriverPin('${emp.docId}', ${emp.id})">Change PIN</button>
                         <button class="btn btn-danger" onclick="removeDriver('${emp.docId}', ${emp.id}, '${emp.name}')">Remove</button>
                     </div>
@@ -1852,6 +1945,458 @@
             document.getElementById('timeoffEndDate').value = '';
             document.getElementById('timeoffNotes').value = '';
             renderTimeOffView();
+        }
+
+        // ============================================
+        // OT BANK VIEW
+        // ============================================
+
+        function isSameDay(a, b) {
+            return a && b &&
+                a.getFullYear() === b.getFullYear() &&
+                a.getMonth() === b.getMonth() &&
+                a.getDate() === b.getDate();
+        }
+
+        function getOtBankBalance(employeeId) {
+            const approved = state.otBank.filter(b => b.employeeId === employeeId && b.status === 'approved');
+            const deposits = approved.filter(b => b.type === 'deposit').reduce((s, b) => s + b.bankedHours, 0);
+            const withdrawals = approved.filter(b => b.type === 'withdrawal').reduce((s, b) => s + b.bankedHours, 0);
+            return deposits - withdrawals;
+        }
+
+        // Already-requested raw hours (approved + pending) for a given employee/period/multiplier
+        function getAlreadyBankedRaw(employeeId, periodStart, multiplier) {
+            return state.otBank
+                .filter(b => b.type === 'deposit' &&
+                    (b.status === 'approved' || b.status === 'pending') &&
+                    b.employeeId === employeeId &&
+                    b.payPeriodStart && isSameDay(b.payPeriodStart, periodStart) &&
+                    Math.abs(b.multiplier - multiplier) < 0.001)
+                .reduce((s, b) => s + b.rawHours, 0);
+        }
+
+        function getEarnedForPeriod(emp, period) {
+            const entries = state.timeEntries.filter(e =>
+                e.employeeId === emp.id && e.clockOut && isInPayPeriod(e.clockIn, period)
+            );
+            return calculateTotals(emp, entries);
+        }
+
+        async function toggleOtBankEnabled(docId, employeeId) {
+            const emp = state.employees.find(e => e.id === employeeId);
+            if (!emp) return;
+            const next = !emp.otBankEnabled;
+            await updateEmployeeInFirebase(docId, { otBankEnabled: next });
+            renderSettingsView();
+        }
+
+        function renderOtBankView() {
+            if (state.isAdmin) {
+                renderAdminOtBankView();
+            } else {
+                renderDriverOtBankView();
+            }
+        }
+
+        function renderDriverOtBankView() {
+            const emp = state.currentUser;
+            if (!emp || !emp.otBankEnabled) {
+                document.getElementById('otbankContent').innerHTML = `
+                    <div class="card"><p class="subtitle text-center">OT Banking is not enabled for your account.</p></div>
+                `;
+                return;
+            }
+
+            const balance = getOtBankBalance(emp.id);
+
+            // Period selection: current and most recent completed
+            const currentPeriod = getCurrentPayPeriod();
+            const recents = getPreviousPayPeriods(2);
+            // recents[0] should be current; recents[1] is the previous period.
+            const previousPeriod = recents.length > 1 ? recents[1] : null;
+
+            const periodOptions = [
+                { value: 'current', label: `Current: ${currentPeriod.label}`, period: currentPeriod }
+            ];
+            if (previousPeriod) {
+                periodOptions.push({ value: 'previous', label: `Most recent completed: ${previousPeriod.label}`, period: previousPeriod });
+            }
+
+            // Compute available OT/DT for each option
+            const periodSummaries = periodOptions.map(opt => {
+                const totals = getEarnedForPeriod(emp, opt.period);
+                const alreadyOt = getAlreadyBankedRaw(emp.id, opt.period.start, 1.5);
+                const alreadyDt = getAlreadyBankedRaw(emp.id, opt.period.start, 2.0);
+                return {
+                    value: opt.value,
+                    label: opt.label,
+                    period: opt.period,
+                    earnedOt: totals.overtimeHours,
+                    earnedDt: totals.doubleTimeHours,
+                    availableOt: Math.max(0, totals.overtimeHours - alreadyOt),
+                    availableDt: Math.max(0, totals.doubleTimeHours - alreadyDt)
+                };
+            });
+
+            // 6-month warning: any approved deposit with payPeriodStart older than 5 months
+            const fiveMonthsAgo = new Date();
+            fiveMonthsAgo.setMonth(fiveMonthsAgo.getMonth() - 5);
+            const hasOldBanked = state.otBank.some(b =>
+                b.type === 'deposit' && b.status === 'approved' && b.employeeId === emp.id &&
+                b.payPeriodStart && b.payPeriodStart < fiveMonthsAgo
+            );
+            const warningBanner = hasOldBanked ? `
+                <div class="alert alert-warning" style="margin-bottom: 16px;">
+                    <strong>Heads up:</strong> You have banked hours older than 5 months. Under BC Employment Standards, banked overtime must be paid out within 6 months.
+                </div>
+            ` : '';
+
+            // Period dropdown for deposits
+            const depositPeriodSelect = `
+                <select id="otBankDepositPeriod" onchange="updateOtBankDepositLimits()" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                    ${periodSummaries.map(p => `<option value="${p.value}">${p.label}</option>`).join('')}
+                </select>
+            `;
+
+            const summaryRows = periodSummaries.map(p => `
+                <div class="driver-card" style="display: flex; flex-direction: column; align-items: stretch; gap: 4px;">
+                    <div class="driver-name">${p.label}</div>
+                    <div class="subtitle">
+                        OT earned: <strong>${p.earnedOt.toFixed(2)}</strong> hrs · available to bank: <strong>${p.availableOt.toFixed(2)}</strong> hrs<br>
+                        DT earned: <strong>${p.earnedDt.toFixed(2)}</strong> hrs · available to bank: <strong>${p.availableDt.toFixed(2)}</strong> hrs
+                    </div>
+                </div>
+            `).join('');
+
+            // Ledger sorted ascending for running balance
+            const myTxns = state.otBank
+                .filter(b => b.employeeId === emp.id)
+                .slice()
+                .sort((a, b) => a.requestDate - b.requestDate);
+            let running = 0;
+            const ledgerRows = myTxns.map(t => {
+                let runningStr = '';
+                if (t.status === 'approved') {
+                    running += (t.type === 'deposit' ? t.bankedHours : -t.bankedHours);
+                    runningStr = running.toFixed(2);
+                }
+                const statusColor = t.status === 'approved' ? '#48bb78' : t.status === 'denied' ? '#f56565' : '#667eea';
+                return `
+                    <tr>
+                        <td>${t.requestDate.toLocaleDateString()}</td>
+                        <td>${t.type === 'deposit' ? 'Deposit' : 'Withdrawal'}${t.type === 'withdrawal' && t.withdrawalType ? ` (${t.withdrawalType})` : ''}</td>
+                        <td>${t.rawHours.toFixed(2)}</td>
+                        <td>${t.multiplier.toFixed(2)}x</td>
+                        <td>${(t.type === 'deposit' ? '+' : '-')}${t.bankedHours.toFixed(2)}</td>
+                        <td><span style="color:${statusColor}; font-weight:600;">${t.status.toUpperCase()}</span></td>
+                        <td>${runningStr}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            document.getElementById('otbankContent').innerHTML = `
+                ${warningBanner}
+                <div class="card">
+                    <div class="header">
+                        <h2>OT Bank</h2>
+                        <div class="text-center">
+                            <div style="font-size: 32px; font-weight: bold; color: #667eea;">${balance.toFixed(2)} hrs</div>
+                            <div class="subtitle">Current banked balance</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Available to Bank</h2>
+                    <div class="grid" style="gap: 12px;">${summaryRows || '<p class="subtitle">No data</p>'}</div>
+                </div>
+
+                <div class="card">
+                    <h2>Bank OT Hours</h2>
+                    <div class="grid grid-2">
+                        <div>
+                            <label>Source pay period</label>
+                            ${depositPeriodSelect}
+                        </div>
+                        <div>
+                            <label>OT hours to bank (1.5x)</label>
+                            <input type="number" id="otBankDepositOt" min="0" step="0.25" value="0" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                            <div class="subtitle" id="otBankDepositOtLimit"></div>
+                        </div>
+                        <div>
+                            <label>DT hours to bank (2x)</label>
+                            <input type="number" id="otBankDepositDt" min="0" step="0.25" value="0" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                            <div class="subtitle" id="otBankDepositDtLimit"></div>
+                        </div>
+                        <div>
+                            <label>Note (optional)</label>
+                            <input type="text" id="otBankDepositNote" placeholder="Optional note" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                        </div>
+                    </div>
+                    <button class="btn btn-success" style="margin-top: 16px;" onclick="submitOtBankDeposit()">Submit Deposit Request</button>
+                </div>
+
+                <div class="card">
+                    <h2>Withdraw Hours</h2>
+                    <div class="grid grid-2">
+                        <div>
+                            <label>Hours to withdraw</label>
+                            <input type="number" id="otBankWithdrawHours" min="0" step="0.25" value="0" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                            <div class="subtitle">Balance available: ${balance.toFixed(2)} hrs</div>
+                        </div>
+                        <div>
+                            <label>Withdrawal type</label>
+                            <select id="otBankWithdrawType" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                                <option value="time-off">Time Off</option>
+                                <option value="cash-out">Cash Out</option>
+                            </select>
+                        </div>
+                        <div style="grid-column: 1 / -1;">
+                            <label>Note (optional)</label>
+                            <input type="text" id="otBankWithdrawNote" placeholder="Optional note" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" style="margin-top: 16px;" onclick="submitOtBankWithdrawal()">Submit Withdrawal Request</button>
+                </div>
+
+                <div class="card">
+                    <h2>Transaction Ledger</h2>
+                    ${myTxns.length === 0 ? '<p class="subtitle text-center">No transactions yet</p>' : `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Type</th>
+                                <th>Raw Hours</th>
+                                <th>Multiplier</th>
+                                <th>Banked Hours</th>
+                                <th>Status</th>
+                                <th>Running Balance</th>
+                            </tr>
+                        </thead>
+                        <tbody>${ledgerRows}</tbody>
+                    </table>
+                    `}
+                </div>
+            `;
+
+            updateOtBankDepositLimits();
+            // Save summaries for the limit-update helper
+            window._otBankPeriodSummaries = periodSummaries;
+        }
+
+        function updateOtBankDepositLimits() {
+            const summaries = window._otBankPeriodSummaries || [];
+            const sel = document.getElementById('otBankDepositPeriod');
+            if (!sel) return;
+            const choice = summaries.find(p => p.value === sel.value);
+            if (!choice) return;
+            const otLimit = document.getElementById('otBankDepositOtLimit');
+            const dtLimit = document.getElementById('otBankDepositDtLimit');
+            if (otLimit) otLimit.textContent = `Max: ${choice.availableOt.toFixed(2)} hrs`;
+            if (dtLimit) dtLimit.textContent = `Max: ${choice.availableDt.toFixed(2)} hrs`;
+        }
+
+        async function submitOtBankDeposit() {
+            const summaries = window._otBankPeriodSummaries || [];
+            const sel = document.getElementById('otBankDepositPeriod').value;
+            const choice = summaries.find(p => p.value === sel);
+            if (!choice) {
+                alert('Please choose a pay period');
+                return;
+            }
+            const otHours = parseFloat(document.getElementById('otBankDepositOt').value) || 0;
+            const dtHours = parseFloat(document.getElementById('otBankDepositDt').value) || 0;
+            const note = document.getElementById('otBankDepositNote').value || '';
+
+            if (otHours <= 0 && dtHours <= 0) {
+                alert('Enter OT and/or DT hours to bank');
+                return;
+            }
+            if (otHours < 0 || dtHours < 0) {
+                alert('Hours cannot be negative');
+                return;
+            }
+            if (otHours > choice.availableOt + 0.001) {
+                alert(`OT request exceeds available (${choice.availableOt.toFixed(2)} hrs)`);
+                return;
+            }
+            if (dtHours > choice.availableDt + 0.001) {
+                alert(`DT request exceeds available (${choice.availableDt.toFixed(2)} hrs)`);
+                return;
+            }
+
+            const emp = state.currentUser;
+            const now = new Date();
+
+            if (otHours > 0) {
+                await addOtBankRequestToFirebase({
+                    employeeId: emp.id,
+                    employeeName: emp.name,
+                    type: 'deposit',
+                    rawHours: otHours,
+                    multiplier: 1.5,
+                    bankedHours: otHours * 1.5,
+                    withdrawalType: null,
+                    payPeriodLabel: choice.period.label,
+                    payPeriodStart: choice.period.start,
+                    status: 'pending',
+                    requestDate: now,
+                    note: note
+                });
+            }
+            if (dtHours > 0) {
+                await addOtBankRequestToFirebase({
+                    employeeId: emp.id,
+                    employeeName: emp.name,
+                    type: 'deposit',
+                    rawHours: dtHours,
+                    multiplier: 2.0,
+                    bankedHours: dtHours * 2.0,
+                    withdrawalType: null,
+                    payPeriodLabel: choice.period.label,
+                    payPeriodStart: choice.period.start,
+                    status: 'pending',
+                    requestDate: now,
+                    note: note
+                });
+            }
+            alert('Deposit request submitted!');
+            renderOtBankView();
+        }
+
+        async function submitOtBankWithdrawal() {
+            const emp = state.currentUser;
+            const hours = parseFloat(document.getElementById('otBankWithdrawHours').value) || 0;
+            const withdrawalType = document.getElementById('otBankWithdrawType').value;
+            const note = document.getElementById('otBankWithdrawNote').value || '';
+            const balance = getOtBankBalance(emp.id);
+
+            if (hours <= 0) {
+                alert('Enter hours to withdraw');
+                return;
+            }
+            if (hours > balance + 0.001) {
+                alert(`Withdrawal exceeds balance (${balance.toFixed(2)} hrs)`);
+                return;
+            }
+
+            await addOtBankRequestToFirebase({
+                employeeId: emp.id,
+                employeeName: emp.name,
+                type: 'withdrawal',
+                rawHours: hours,
+                multiplier: 1.0,
+                bankedHours: hours,
+                withdrawalType: withdrawalType,
+                payPeriodLabel: '',
+                payPeriodStart: null,
+                status: 'pending',
+                requestDate: new Date(),
+                note: note
+            });
+            alert('Withdrawal request submitted!');
+            renderOtBankView();
+        }
+
+        function renderAdminOtBankView() {
+            const banked = state.employees.filter(e => e.otBankEnabled);
+
+            const balanceCards = banked.length === 0
+                ? '<p class="subtitle">No employees have OT banking enabled. Enable it from Settings.</p>'
+                : `<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+                    ${banked.map(emp => `
+                        <div class="pay-card regular">
+                            <div class="pay-label">${emp.name}</div>
+                            <div class="pay-amount">${getOtBankBalance(emp.id).toFixed(2)}</div>
+                            <div class="subtitle">banked hours</div>
+                        </div>
+                    `).join('')}
+                </div>`;
+
+            const pending = state.otBank.filter(r => r.status === 'pending');
+            const pendingSection = pending.length === 0
+                ? '<p class="subtitle">No pending requests</p>'
+                : pending.map(req => `
+                    <div class="driver-card">
+                        <div style="flex: 1;">
+                            <div class="driver-name">${req.employeeName}</div>
+                            <div class="subtitle">
+                                ${req.type === 'deposit' ? 'Deposit' : 'Withdrawal'}${req.type === 'withdrawal' && req.withdrawalType ? ` (${req.withdrawalType})` : ''}
+                                — ${req.rawHours.toFixed(2)} raw × ${req.multiplier.toFixed(2)}x = <strong>${req.bankedHours.toFixed(2)}</strong> hrs
+                                ${req.payPeriodLabel ? `<br>From: ${req.payPeriodLabel}` : ''}
+                                <br>Requested: ${req.requestDate.toLocaleDateString()}
+                                ${req.note ? `<br>Note: ${req.note}` : ''}
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-success" onclick="approveOtBankRequest('${req.docId}')">Approve</button>
+                            <button class="btn btn-danger" onclick="denyOtBankRequest('${req.docId}')">Deny</button>
+                        </div>
+                    </div>
+                `).join('');
+
+            const allTxns = state.otBank
+                .filter(r => banked.some(e => e.id === r.employeeId))
+                .slice()
+                .sort((a, b) => b.requestDate - a.requestDate);
+            const txnRows = allTxns.map(t => {
+                const statusColor = t.status === 'approved' ? '#48bb78' : t.status === 'denied' ? '#f56565' : '#667eea';
+                return `
+                    <tr>
+                        <td>${t.requestDate.toLocaleDateString()}</td>
+                        <td><strong>${t.employeeName}</strong></td>
+                        <td>${t.type === 'deposit' ? 'Deposit' : 'Withdrawal'}${t.type === 'withdrawal' && t.withdrawalType ? ` (${t.withdrawalType})` : ''}</td>
+                        <td>${t.rawHours.toFixed(2)}</td>
+                        <td>${t.multiplier.toFixed(2)}x</td>
+                        <td>${(t.type === 'deposit' ? '+' : '-')}${t.bankedHours.toFixed(2)}</td>
+                        <td><span style="color:${statusColor}; font-weight:600;">${t.status.toUpperCase()}</span></td>
+                    </tr>
+                `;
+            }).join('');
+
+            document.getElementById('otbankContent').innerHTML = `
+                <div class="card">
+                    <h2>OT Bank Balances</h2>
+                    ${balanceCards}
+                </div>
+
+                <div class="card">
+                    <h2>Pending Requests</h2>
+                    ${pendingSection}
+                </div>
+
+                <div class="card">
+                    <h2>Transaction History</h2>
+                    ${allTxns.length === 0 ? '<p class="subtitle text-center">No transactions</p>' : `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Employee</th>
+                                <th>Type</th>
+                                <th>Raw Hours</th>
+                                <th>Multiplier</th>
+                                <th>Banked Hours</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>${txnRows}</tbody>
+                    </table>
+                    `}
+                </div>
+            `;
+        }
+
+        async function approveOtBankRequest(docId) {
+            await updateOtBankRequestStatus(docId, 'approved');
+            renderOtBankView();
+        }
+
+        async function denyOtBankRequest(docId) {
+            await updateOtBankRequestStatus(docId, 'denied');
+            renderOtBankView();
         }
 
         // Utility Functions
