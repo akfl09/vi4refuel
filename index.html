@@ -524,10 +524,26 @@
         async function loadEmployees() {
             try {
                 const snapshot = await db.collection('employees').orderBy('id').get();
-                state.employees = [];
+                const loaded = [];
                 snapshot.forEach(doc => {
-                    state.employees.push({ ...doc.data(), docId: doc.id });
+                    loaded.push({ ...doc.data(), docId: doc.id });
                 });
+
+                // Dedup guard: drop any documents that share an id or name with
+                // one already kept. Keeps the first occurrence (orderBy('id'))
+                // so the UI stays consistent even if the database has dupes.
+                const seenIds = new Set();
+                const seenNames = new Set();
+                state.employees = [];
+                for (const emp of loaded) {
+                    if (seenIds.has(emp.id) || seenNames.has(emp.name)) {
+                        console.warn(`Duplicate employee dropped from state: id=${emp.id} name="${emp.name}" docId=${emp.docId}`);
+                        continue;
+                    }
+                    seenIds.add(emp.id);
+                    seenNames.add(emp.name);
+                    state.employees.push(emp);
+                }
 
                 // If no employees, create defaults
                 if (state.employees.length === 0) {
