@@ -545,8 +545,16 @@
                     state.employees.push(emp);
                 }
 
-                // If no employees, create defaults
-                if (state.employees.length === 0) {
+                // Seed defaults only on a truly empty collection (first-time
+                // setup). Re-fetch right before writing so a transient empty
+                // result from the load above can't trigger a duplicate seed.
+                if (loaded.length === 0) {
+                    const verify = await db.collection('employees').limit(1).get();
+                    if (!verify.empty) {
+                        console.warn('Skipping default seed: employees already exist in Firestore.');
+                        return;
+                    }
+
                     const defaultEmployees = [
                         { id: 1, name: 'Ian Laird', status: 'clocked-out', pin: '1111', otBankEnabled: false },
                         { id: 2, name: 'Logan Deschenes', status: 'clocked-out', pin: '2222', otBankEnabled: false },
