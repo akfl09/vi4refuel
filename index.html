@@ -1444,20 +1444,37 @@
                     b.payPeriodStart &&
                     isSameDay(b.payPeriodStart, state.selectedPayPeriod === 'current' ? currentPeriod.start : getPayPeriod(new Date(state.selectedPayPeriod)).start)
                 );
+                const bankedRawReg = bankedDepositsForPeriod
+                    .filter(b => Math.abs(b.multiplier - 1.0) < 0.001)
+                    .reduce((s, b) => s + b.rawHours, 0);
                 const bankedRawOt = bankedDepositsForPeriod
                     .filter(b => Math.abs(b.multiplier - 1.5) < 0.001)
                     .reduce((s, b) => s + b.rawHours, 0);
                 const bankedRawDt = bankedDepositsForPeriod
                     .filter(b => Math.abs(b.multiplier - 2.0) < 0.001)
                     .reduce((s, b) => s + b.rawHours, 0);
+                const netReg = totals.regularHours - bankedRawReg;
                 const netOt = totals.overtimeHours - bankedRawOt;
                 const netDt = totals.doubleTimeHours - bankedRawDt;
+                const hasAnyBanked = bankedRawReg > 0 || bankedRawOt > 0 || bankedRawDt > 0;
+                const grossTotal = totals.regularHours + totals.overtimeHours + totals.doubleTimeHours + totals.statHolidayHours;
+                const netTotal = netReg + netOt + netDt + totals.statHolidayHours;
 
-                const bankedLines = (bankedRawOt > 0 || bankedRawDt > 0) ? `
-                    <div style="margin-top: 12px; padding: 10px 14px; background: #fef5e7; border-left: 4px solid #ed8936; border-radius: 6px;">
-                        <div style="font-weight: 600; color: #7d6608; margin-bottom: 4px;">Banked to OT Bank</div>
-                        ${bankedRawOt > 0 ? `<div style="color: #7d6608;">Banked OT: -${bankedRawOt.toFixed(2)} hrs</div>` : ''}
-                        ${bankedRawDt > 0 ? `<div style="color: #7d6608;">Banked DT: -${bankedRawDt.toFixed(2)} hrs</div>` : ''}
+                // Gross-minus-banked breakdown shown when banking applies to that category
+                const breakdown = (gross, banked) => banked > 0
+                    ? `<div class="subtitle" style="margin-top: 4px;"><span style="color: #4a5568;">Gross ${gross.toFixed(2)}</span> <span style="color: #c05621;">− Banked ${banked.toFixed(2)}</span></div>`
+                    : '';
+
+                const bankedLines = hasAnyBanked ? `
+                    <div style="margin-top: 12px; padding: 12px 16px; background: #fef5e7; border-left: 4px solid #ed8936; border-radius: 6px;">
+                        <div style="font-weight: 600; color: #7d6608; margin-bottom: 6px;">Banked to OT Bank (this period)</div>
+                        ${bankedRawReg > 0 ? `<div style="color: #c05621;">Banked Regular: -${bankedRawReg.toFixed(2)} hrs</div>` : ''}
+                        ${bankedRawOt > 0 ? `<div style="color: #c05621;">Banked OT: -${bankedRawOt.toFixed(2)} hrs</div>` : ''}
+                        ${bankedRawDt > 0 ? `<div style="color: #c05621;">Banked DT: -${bankedRawDt.toFixed(2)} hrs</div>` : ''}
+                        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #f6cf94; font-weight: 600; color: #2d3748;">
+                            Net payable: <span style="font-size: 18px;">${netTotal.toFixed(2)}</span> hrs
+                            <span class="subtitle" style="margin-left: 6px;">(gross ${grossTotal.toFixed(2)} − banked ${(bankedRawReg + bankedRawOt + bankedRawDt).toFixed(2)})</span>
+                        </div>
                     </div>
                 ` : '';
 
@@ -1473,17 +1490,18 @@
                         <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-top: 20px;">
                             <div class="pay-card regular">
                                 <div class="pay-label">Regular Hours</div>
-                                <div class="pay-amount">${totals.regularHours.toFixed(2)}</div>
+                                <div class="pay-amount">${netReg.toFixed(2)}</div>
+                                ${breakdown(totals.regularHours, bankedRawReg)}
                             </div>
                             <div class="pay-card overtime">
                                 <div class="pay-label">Overtime Hours (1.5x)</div>
                                 <div class="pay-amount">${netOt.toFixed(2)}</div>
-                                ${bankedRawOt > 0 ? `<div class="subtitle" style="margin-top: 4px;">${totals.overtimeHours.toFixed(2)} earned − ${bankedRawOt.toFixed(2)} banked</div>` : ''}
+                                ${breakdown(totals.overtimeHours, bankedRawOt)}
                             </div>
                             <div class="pay-card doubletime">
                                 <div class="pay-label">Double Time Hours (2x)</div>
                                 <div class="pay-amount">${netDt.toFixed(2)}</div>
-                                ${bankedRawDt > 0 ? `<div class="subtitle" style="margin-top: 4px;">${totals.doubleTimeHours.toFixed(2)} earned − ${bankedRawDt.toFixed(2)} banked</div>` : ''}
+                                ${breakdown(totals.doubleTimeHours, bankedRawDt)}
                             </div>
                             <div class="pay-card stat">
                                 <div class="pay-label">Stat Holiday Hours</div>
@@ -2054,17 +2072,20 @@
                 periodOptions.push({ value: 'previous', label: `Most recent completed: ${previousPeriod.label}`, period: previousPeriod });
             }
 
-            // Compute available OT/DT for each option
+            // Compute available Reg/OT/DT for each option
             const periodSummaries = periodOptions.map(opt => {
                 const totals = getEarnedForPeriod(emp, opt.period);
+                const alreadyReg = getAlreadyBankedRaw(emp.id, opt.period.start, 1.0);
                 const alreadyOt = getAlreadyBankedRaw(emp.id, opt.period.start, 1.5);
                 const alreadyDt = getAlreadyBankedRaw(emp.id, opt.period.start, 2.0);
                 return {
                     value: opt.value,
                     label: opt.label,
                     period: opt.period,
+                    earnedReg: totals.regularHours,
                     earnedOt: totals.overtimeHours,
                     earnedDt: totals.doubleTimeHours,
+                    availableReg: Math.max(0, totals.regularHours - alreadyReg),
                     availableOt: Math.max(0, totals.overtimeHours - alreadyOt),
                     availableDt: Math.max(0, totals.doubleTimeHours - alreadyDt)
                 };
@@ -2094,6 +2115,7 @@
                 <div class="driver-card" style="display: flex; flex-direction: column; align-items: stretch; gap: 4px;">
                     <div class="driver-name">${p.label}</div>
                     <div class="subtitle">
+                        Reg earned: <strong>${p.earnedReg.toFixed(2)}</strong> hrs · available to bank: <strong>${p.availableReg.toFixed(2)}</strong> hrs<br>
                         OT earned: <strong>${p.earnedOt.toFixed(2)}</strong> hrs · available to bank: <strong>${p.availableOt.toFixed(2)}</strong> hrs<br>
                         DT earned: <strong>${p.earnedDt.toFixed(2)}</strong> hrs · available to bank: <strong>${p.availableDt.toFixed(2)}</strong> hrs
                     </div>
@@ -2144,11 +2166,16 @@
                 </div>
 
                 <div class="card">
-                    <h2>Bank OT Hours</h2>
+                    <h2>Bank Hours</h2>
                     <div class="grid grid-2">
                         <div>
                             <label>Source pay period</label>
                             ${depositPeriodSelect}
+                        </div>
+                        <div>
+                            <label>Regular hours to bank (1x)</label>
+                            <input type="number" id="otBankDepositReg" min="0" step="0.25" value="0" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                            <div class="subtitle" id="otBankDepositRegLimit"></div>
                         </div>
                         <div>
                             <label>OT hours to bank (1.5x)</label>
@@ -2223,8 +2250,10 @@
             if (!sel) return;
             const choice = summaries.find(p => p.value === sel.value);
             if (!choice) return;
+            const regLimit = document.getElementById('otBankDepositRegLimit');
             const otLimit = document.getElementById('otBankDepositOtLimit');
             const dtLimit = document.getElementById('otBankDepositDtLimit');
+            if (regLimit) regLimit.textContent = `Max: ${choice.availableReg.toFixed(2)} hrs`;
             if (otLimit) otLimit.textContent = `Max: ${choice.availableOt.toFixed(2)} hrs`;
             if (dtLimit) dtLimit.textContent = `Max: ${choice.availableDt.toFixed(2)} hrs`;
         }
@@ -2237,16 +2266,21 @@
                 alert('Please choose a pay period');
                 return;
             }
+            const regHours = parseFloat(document.getElementById('otBankDepositReg').value) || 0;
             const otHours = parseFloat(document.getElementById('otBankDepositOt').value) || 0;
             const dtHours = parseFloat(document.getElementById('otBankDepositDt').value) || 0;
             const note = document.getElementById('otBankDepositNote').value || '';
 
-            if (otHours <= 0 && dtHours <= 0) {
-                alert('Enter OT and/or DT hours to bank');
+            if (regHours <= 0 && otHours <= 0 && dtHours <= 0) {
+                alert('Enter Regular, OT, and/or DT hours to bank');
                 return;
             }
-            if (otHours < 0 || dtHours < 0) {
+            if (regHours < 0 || otHours < 0 || dtHours < 0) {
                 alert('Hours cannot be negative');
+                return;
+            }
+            if (regHours > choice.availableReg + 0.001) {
+                alert(`Regular request exceeds available (${choice.availableReg.toFixed(2)} hrs)`);
                 return;
             }
             if (otHours > choice.availableOt + 0.001) {
@@ -2261,6 +2295,22 @@
             const emp = state.currentUser;
             const now = new Date();
 
+            if (regHours > 0) {
+                await addOtBankRequestToFirebase({
+                    employeeId: emp.id,
+                    employeeName: emp.name,
+                    type: 'deposit',
+                    rawHours: regHours,
+                    multiplier: 1.0,
+                    bankedHours: regHours * 1.0,
+                    withdrawalType: null,
+                    payPeriodLabel: choice.period.label,
+                    payPeriodStart: choice.period.start,
+                    status: 'pending',
+                    requestDate: now,
+                    note: note
+                });
+            }
             if (otHours > 0) {
                 await addOtBankRequestToFirebase({
                     employeeId: emp.id,
@@ -2369,13 +2419,16 @@
                 adminDepositMatrix[emp.id] = {};
                 periodOptions.forEach(opt => {
                     const totals = getEarnedForPeriod(emp, opt.period);
+                    const alreadyReg = getAlreadyBankedRaw(emp.id, opt.period.start, 1.0);
                     const alreadyOt = getAlreadyBankedRaw(emp.id, opt.period.start, 1.5);
                     const alreadyDt = getAlreadyBankedRaw(emp.id, opt.period.start, 2.0);
                     adminDepositMatrix[emp.id][opt.value] = {
                         label: opt.label,
                         period: opt.period,
+                        earnedReg: totals.regularHours,
                         earnedOt: totals.overtimeHours,
                         earnedDt: totals.doubleTimeHours,
+                        availableReg: Math.max(0, totals.regularHours - alreadyReg),
                         availableOt: Math.max(0, totals.overtimeHours - alreadyOt),
                         availableDt: Math.max(0, totals.doubleTimeHours - alreadyDt)
                     };
@@ -2389,7 +2442,7 @@
                 : `
                 <div class="card">
                     <h2>Admin Deposit</h2>
-                    <p class="subtitle" style="margin-bottom: 16px;">Bank OT/DT hours into an employee's account directly. Saved immediately as approved.</p>
+                    <p class="subtitle" style="margin-bottom: 16px;">Bank Regular/OT/DT hours into an employee's account directly. Saved immediately as approved.</p>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
                         <div>
                             <label style="display: block; margin-bottom: 6px; font-weight: 600;">Employee</label>
@@ -2407,7 +2460,12 @@
                     <div class="driver-card" id="adminOtBankDepositSummary" style="display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin-bottom: 12px;">
                         <div class="subtitle" id="adminOtBankDepositSummaryText"></div>
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                        <div>
+                            <label style="display: block; margin-bottom: 6px; font-weight: 600;">Regular Hours to Bank (×1.0)</label>
+                            <input type="number" id="adminOtBankDepositReg" min="0" step="0.25" value="0" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                            <div class="subtitle" id="adminOtBankDepositRegLimit"></div>
+                        </div>
                         <div>
                             <label style="display: block; margin-bottom: 6px; font-weight: 600;">OT Hours to Bank (×1.5)</label>
                             <input type="number" id="adminOtBankDepositOt" min="0" step="0.25" value="0" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
@@ -2512,19 +2570,23 @@
             if (!empSel || !perSel) return;
             const empId = parseInt(empSel.value, 10);
             const summary = matrix[empId] && matrix[empId][perSel.value];
+            const regLimit = document.getElementById('adminOtBankDepositRegLimit');
             const otLimit = document.getElementById('adminOtBankDepositOtLimit');
             const dtLimit = document.getElementById('adminOtBankDepositDtLimit');
             const summaryText = document.getElementById('adminOtBankDepositSummaryText');
             if (!summary) {
+                if (regLimit) regLimit.textContent = '';
                 if (otLimit) otLimit.textContent = '';
                 if (dtLimit) dtLimit.textContent = '';
                 if (summaryText) summaryText.textContent = '';
                 return;
             }
+            if (regLimit) regLimit.textContent = `Max: ${summary.availableReg.toFixed(2)} hrs`;
             if (otLimit) otLimit.textContent = `Max: ${summary.availableOt.toFixed(2)} hrs`;
             if (dtLimit) dtLimit.textContent = `Max: ${summary.availableDt.toFixed(2)} hrs`;
             if (summaryText) {
                 summaryText.innerHTML =
+                    `Reg earned: <strong>${summary.earnedReg.toFixed(2)}</strong> hrs · available to bank: <strong>${summary.availableReg.toFixed(2)}</strong> hrs<br>` +
                     `OT earned: <strong>${summary.earnedOt.toFixed(2)}</strong> hrs · available to bank: <strong>${summary.availableOt.toFixed(2)}</strong> hrs<br>` +
                     `DT earned: <strong>${summary.earnedDt.toFixed(2)}</strong> hrs · available to bank: <strong>${summary.availableDt.toFixed(2)}</strong> hrs`;
             }
@@ -2542,16 +2604,21 @@
                 alert('Please choose an employee and pay period');
                 return;
             }
+            const regHours = parseFloat(document.getElementById('adminOtBankDepositReg').value) || 0;
             const otHours = parseFloat(document.getElementById('adminOtBankDepositOt').value) || 0;
             const dtHours = parseFloat(document.getElementById('adminOtBankDepositDt').value) || 0;
             const note = document.getElementById('adminOtBankDepositNote').value || '';
 
-            if (otHours <= 0 && dtHours <= 0) {
-                alert('Enter OT and/or DT hours to bank');
+            if (regHours <= 0 && otHours <= 0 && dtHours <= 0) {
+                alert('Enter Regular, OT, and/or DT hours to bank');
                 return;
             }
-            if (otHours < 0 || dtHours < 0) {
+            if (regHours < 0 || otHours < 0 || dtHours < 0) {
                 alert('Hours cannot be negative');
+                return;
+            }
+            if (regHours > summary.availableReg + 0.001) {
+                alert(`Regular exceeds available (${summary.availableReg.toFixed(2)} hrs)`);
                 return;
             }
             if (otHours > summary.availableOt + 0.001) {
@@ -2564,6 +2631,23 @@
             }
 
             const now = new Date();
+            if (regHours > 0) {
+                await addOtBankRequestToFirebase({
+                    employeeId: emp.id,
+                    employeeName: emp.name,
+                    type: 'deposit',
+                    rawHours: regHours,
+                    multiplier: 1.0,
+                    bankedHours: regHours * 1.0,
+                    withdrawalType: null,
+                    payPeriodLabel: summary.period.label,
+                    payPeriodStart: summary.period.start,
+                    status: 'approved',
+                    requestDate: now,
+                    note: note,
+                    isManual: true
+                });
+            }
             if (otHours > 0) {
                 await addOtBankRequestToFirebase({
                     employeeId: emp.id,
