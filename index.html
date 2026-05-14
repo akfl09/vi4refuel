@@ -2039,7 +2039,13 @@
             const currentPeriod = getCurrentPayPeriod();
             const recents = getPreviousPayPeriods(2);
             // recents[0] should be current; recents[1] is the previous period.
-            const previousPeriod = recents.length > 1 ? recents[1] : null;
+            // Re-derive label from the value string with explicit local-midnight parsing
+            // (the helper's own label is computed from `new Date(value)` which is UTC-parsed
+            // and lands on the wrong period in negative-UTC timezones).
+            const previousPeriod = recents.length > 1 ? {
+                ...recents[1],
+                label: getPayPeriod(new Date(recents[1].value + 'T00:00:00')).label
+            } : null;
 
             const periodOptions = [
                 { value: 'current', label: `Current: ${currentPeriod.label}`, period: currentPeriod }
@@ -2347,7 +2353,11 @@
             // Admin Deposit section: pre-compute per-employee/per-period availability
             const currentPeriod = getCurrentPayPeriod();
             const recents = getPreviousPayPeriods(2);
-            const previousPeriod = recents.length > 1 ? recents[1] : null;
+            // Re-derive label with explicit local-midnight parsing — see renderDriverOtBankView.
+            const previousPeriod = recents.length > 1 ? {
+                ...recents[1],
+                label: getPayPeriod(new Date(recents[1].value + 'T00:00:00')).label
+            } : null;
             const periodOptions = [
                 { value: 'current', label: `Current: ${currentPeriod.label}`, period: currentPeriod }
             ];
