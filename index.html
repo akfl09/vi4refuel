@@ -2344,6 +2344,79 @@
                     `).join('')}
                 </div>`;
 
+            // Admin Deposit section: pre-compute per-employee/per-period availability
+            const currentPeriod = getCurrentPayPeriod();
+            const recents = getPreviousPayPeriods(2);
+            const previousPeriod = recents.length > 1 ? recents[1] : null;
+            const periodOptions = [
+                { value: 'current', label: `Current: ${currentPeriod.label}`, period: currentPeriod }
+            ];
+            if (previousPeriod) {
+                periodOptions.push({ value: 'previous', label: `Most recent completed: ${previousPeriod.label}`, period: previousPeriod });
+            }
+            const adminDepositMatrix = {};
+            banked.forEach(emp => {
+                adminDepositMatrix[emp.id] = {};
+                periodOptions.forEach(opt => {
+                    const totals = getEarnedForPeriod(emp, opt.period);
+                    const alreadyOt = getAlreadyBankedRaw(emp.id, opt.period.start, 1.5);
+                    const alreadyDt = getAlreadyBankedRaw(emp.id, opt.period.start, 2.0);
+                    adminDepositMatrix[emp.id][opt.value] = {
+                        label: opt.label,
+                        period: opt.period,
+                        earnedOt: totals.overtimeHours,
+                        earnedDt: totals.doubleTimeHours,
+                        availableOt: Math.max(0, totals.overtimeHours - alreadyOt),
+                        availableDt: Math.max(0, totals.doubleTimeHours - alreadyDt)
+                    };
+                });
+            });
+            window._adminOtBankDepositMatrix = adminDepositMatrix;
+            window._adminOtBankDepositPeriods = periodOptions;
+
+            const adminDepositSection = banked.length === 0
+                ? ''
+                : `
+                <div class="card">
+                    <h2>Admin Deposit</h2>
+                    <p class="subtitle" style="margin-bottom: 16px;">Bank OT/DT hours into an employee's account directly. Saved immediately as approved.</p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                        <div>
+                            <label style="display: block; margin-bottom: 6px; font-weight: 600;">Employee</label>
+                            <select id="adminOtBankDepositEmployee" onchange="updateAdminOtBankDepositLimits()" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                                ${banked.map(e => `<option value="${e.id}">${e.name}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 6px; font-weight: 600;">Pay Period</label>
+                            <select id="adminOtBankDepositPeriod" onchange="updateAdminOtBankDepositLimits()" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                                ${periodOptions.map(p => `<option value="${p.value}">${p.label}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="driver-card" id="adminOtBankDepositSummary" style="display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin-bottom: 12px;">
+                        <div class="subtitle" id="adminOtBankDepositSummaryText"></div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                        <div>
+                            <label style="display: block; margin-bottom: 6px; font-weight: 600;">OT Hours to Bank (×1.5)</label>
+                            <input type="number" id="adminOtBankDepositOt" min="0" step="0.25" value="0" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                            <div class="subtitle" id="adminOtBankDepositOtLimit"></div>
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 6px; font-weight: 600;">DT Hours to Bank (×2.0)</label>
+                            <input type="number" id="adminOtBankDepositDt" min="0" step="0.25" value="0" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                            <div class="subtitle" id="adminOtBankDepositDtLimit"></div>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Note (optional)</label>
+                        <input type="text" id="adminOtBankDepositNote" placeholder="Optional note" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px;">
+                    </div>
+                    <button class="btn btn-success" onclick="submitAdminOtBankDeposit()">Bank Hours</button>
+                </div>
+                `;
+
             const pending = state.otBank.filter(r => r.status === 'pending');
             const pendingSection = pending.length === 0
                 ? '<p class="subtitle">No pending requests</p>'
@@ -2391,6 +2464,8 @@
                     ${balanceCards}
                 </div>
 
+                ${adminDepositSection}
+
                 <div class="card">
                     <h2>Pending Requests</h2>
                     ${pendingSection}
@@ -2416,6 +2491,105 @@
                     `}
                 </div>
             `;
+
+            if (banked.length > 0) updateAdminOtBankDepositLimits();
+        }
+
+        function updateAdminOtBankDepositLimits() {
+            const matrix = window._adminOtBankDepositMatrix || {};
+            const empSel = document.getElementById('adminOtBankDepositEmployee');
+            const perSel = document.getElementById('adminOtBankDepositPeriod');
+            if (!empSel || !perSel) return;
+            const empId = parseInt(empSel.value, 10);
+            const summary = matrix[empId] && matrix[empId][perSel.value];
+            const otLimit = document.getElementById('adminOtBankDepositOtLimit');
+            const dtLimit = document.getElementById('adminOtBankDepositDtLimit');
+            const summaryText = document.getElementById('adminOtBankDepositSummaryText');
+            if (!summary) {
+                if (otLimit) otLimit.textContent = '';
+                if (dtLimit) dtLimit.textContent = '';
+                if (summaryText) summaryText.textContent = '';
+                return;
+            }
+            if (otLimit) otLimit.textContent = `Max: ${summary.availableOt.toFixed(2)} hrs`;
+            if (dtLimit) dtLimit.textContent = `Max: ${summary.availableDt.toFixed(2)} hrs`;
+            if (summaryText) {
+                summaryText.innerHTML =
+                    `OT earned: <strong>${summary.earnedOt.toFixed(2)}</strong> hrs · available to bank: <strong>${summary.availableOt.toFixed(2)}</strong> hrs<br>` +
+                    `DT earned: <strong>${summary.earnedDt.toFixed(2)}</strong> hrs · available to bank: <strong>${summary.availableDt.toFixed(2)}</strong> hrs`;
+            }
+        }
+
+        async function submitAdminOtBankDeposit() {
+            const matrix = window._adminOtBankDepositMatrix || {};
+            const empSel = document.getElementById('adminOtBankDepositEmployee');
+            const perSel = document.getElementById('adminOtBankDepositPeriod');
+            if (!empSel || !perSel) return;
+            const empId = parseInt(empSel.value, 10);
+            const emp = state.employees.find(e => e.id === empId);
+            const summary = matrix[empId] && matrix[empId][perSel.value];
+            if (!emp || !summary) {
+                alert('Please choose an employee and pay period');
+                return;
+            }
+            const otHours = parseFloat(document.getElementById('adminOtBankDepositOt').value) || 0;
+            const dtHours = parseFloat(document.getElementById('adminOtBankDepositDt').value) || 0;
+            const note = document.getElementById('adminOtBankDepositNote').value || '';
+
+            if (otHours <= 0 && dtHours <= 0) {
+                alert('Enter OT and/or DT hours to bank');
+                return;
+            }
+            if (otHours < 0 || dtHours < 0) {
+                alert('Hours cannot be negative');
+                return;
+            }
+            if (otHours > summary.availableOt + 0.001) {
+                alert(`OT exceeds available (${summary.availableOt.toFixed(2)} hrs)`);
+                return;
+            }
+            if (dtHours > summary.availableDt + 0.001) {
+                alert(`DT exceeds available (${summary.availableDt.toFixed(2)} hrs)`);
+                return;
+            }
+
+            const now = new Date();
+            if (otHours > 0) {
+                await addOtBankRequestToFirebase({
+                    employeeId: emp.id,
+                    employeeName: emp.name,
+                    type: 'deposit',
+                    rawHours: otHours,
+                    multiplier: 1.5,
+                    bankedHours: otHours * 1.5,
+                    withdrawalType: null,
+                    payPeriodLabel: summary.period.label,
+                    payPeriodStart: summary.period.start,
+                    status: 'approved',
+                    requestDate: now,
+                    note: note,
+                    isManual: true
+                });
+            }
+            if (dtHours > 0) {
+                await addOtBankRequestToFirebase({
+                    employeeId: emp.id,
+                    employeeName: emp.name,
+                    type: 'deposit',
+                    rawHours: dtHours,
+                    multiplier: 2.0,
+                    bankedHours: dtHours * 2.0,
+                    withdrawalType: null,
+                    payPeriodLabel: summary.period.label,
+                    payPeriodStart: summary.period.start,
+                    status: 'approved',
+                    requestDate: now,
+                    note: note,
+                    isManual: true
+                });
+            }
+            alert('Hours banked.');
+            renderOtBankView();
         }
 
         async function approveOtBankRequest(docId) {
