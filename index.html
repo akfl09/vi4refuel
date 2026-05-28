@@ -682,6 +682,29 @@
             }
         }
 
+        // Delete an OT bank transaction entirely
+        async function deleteOtBankTransaction(docId) {
+            try {
+                await db.collection('otBank').doc(docId).delete();
+                state.otBank = state.otBank.filter(t => t.docId !== docId);
+            } catch (error) {
+                console.error('Error deleting OT bank transaction:', error);
+                alert('Error deleting transaction');
+            }
+        }
+
+        // Update arbitrary fields on an OT bank transaction
+        async function updateOtBankTransaction(docId, updates) {
+            try {
+                await db.collection('otBank').doc(docId).update(updates);
+                const txn = state.otBank.find(t => t.docId === docId);
+                if (txn) Object.assign(txn, updates);
+            } catch (error) {
+                console.error('Error updating OT bank transaction:', error);
+                alert('Error updating transaction');
+            }
+        }
+
         // Add schedule to Firebase
         async function addScheduleToFirebase(schedule) {
             try {
@@ -2526,6 +2549,26 @@
                 `;
             }).join('');
 
+            const manageRows = allTxns.map(t => {
+                const statusColor = t.status === 'approved' ? '#48bb78' : t.status === 'denied' ? '#f56565' : '#667eea';
+                return `
+                    <tr>
+                        <td>${t.requestDate.toLocaleDateString()}</td>
+                        <td><strong>${t.employeeName}</strong></td>
+                        <td>${t.type === 'deposit' ? 'Deposit' : 'Withdrawal'}${t.type === 'withdrawal' && t.withdrawalType ? ` (${t.withdrawalType})` : ''}</td>
+                        <td>${t.rawHours.toFixed(2)}</td>
+                        <td>${t.multiplier.toFixed(2)}x</td>
+                        <td>${(t.type === 'deposit' ? '+' : '-')}${t.bankedHours.toFixed(2)}</td>
+                        <td><span style="color:${statusColor}; font-weight:600;">${t.status.toUpperCase()}</span></td>
+                        <td>${t.isManual ? 'Yes' : 'No'}</td>
+                        <td style="white-space: nowrap;">
+                            <button class="btn btn-secondary" style="padding: 6px 10px; margin-right: 6px;" onclick="adjustOtBankTransaction('${t.docId}')">Adjust</button>
+                            <button class="btn btn-danger" style="padding: 6px 10px;" onclick="deleteOtBankTransactionPrompt('${t.docId}')">Delete</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
             document.getElementById('otbankContent').innerHTML = `
                 <div class="card">
                     <h2>OT Bank Balances</h2>
@@ -2555,6 +2598,29 @@
                             </tr>
                         </thead>
                         <tbody>${txnRows}</tbody>
+                    </table>
+                    `}
+                </div>
+
+                <div class="card">
+                    <h2>Manage Transactions</h2>
+                    <p class="subtitle" style="margin-bottom: 16px;">Adjust the raw hours (banked hours recalculate automatically) or delete any transaction.</p>
+                    ${allTxns.length === 0 ? '<p class="subtitle text-center">No transactions</p>' : `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Employee</th>
+                                <th>Type</th>
+                                <th>Raw Hours</th>
+                                <th>Multiplier</th>
+                                <th>Banked Hours</th>
+                                <th>Status</th>
+                                <th>Manual</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>${manageRows}</tbody>
                     </table>
                     `}
                 </div>
@@ -2696,6 +2762,34 @@
             renderOtBankView();
         }
 
+        async function deleteOtBankTransactionPrompt(docId) {
+            const txn = state.otBank.find(t => t.docId === docId);
+            if (!txn) return;
+            const verb = txn.type === 'deposit' ? 'deposit' : 'withdrawal';
+            if (!confirm(`Delete this ${verb} of ${txn.bankedHours.toFixed(2)} banked hrs for ${txn.employeeName}? This cannot be undone.`)) return;
+            await deleteOtBankTransaction(docId);
+            renderOtBankView();
+        }
+
+        async function adjustOtBankTransaction(docId) {
+            const txn = state.otBank.find(t => t.docId === docId);
+            if (!txn) return;
+            const input = prompt(
+                `Adjust raw hours for ${txn.employeeName}'s ${txn.type} (multiplier ${txn.multiplier.toFixed(2)}x).\n` +
+                `Banked hours will recalculate as raw × multiplier.\nCurrent raw hours: ${txn.rawHours.toFixed(2)}`,
+                txn.rawHours.toFixed(2)
+            );
+            if (input === null) return;
+            const newRaw = parseFloat(input);
+            if (isNaN(newRaw) || newRaw < 0) {
+                alert('Enter a valid non-negative number of hours');
+                return;
+            }
+            const newBanked = newRaw * txn.multiplier;
+            await updateOtBankTransaction(docId, { rawHours: newRaw, bankedHours: newBanked });
+            renderOtBankView();
+        }
+
         // Utility Functions
         function formatLocation(loc) {
             if (!loc) return 'N/A';
@@ -2735,7 +2829,8 @@
             const clockOut = entry.clockOut;
             const hours = (clockOut - clockIn) / (1000 * 60 * 60);
             
-            const isHoliday = statHolidays.includes(clockIn.toISOString().split('T')[0]);
+            const dateStr = clockIn.getFullYear() + '-' + String(clockIn.getMonth()+1).padStart(2,'0') + '-' + String(clockIn.getDate()).padStart(2,'0');
+            const isHoliday = statHolidays.includes(dateStr);
             
             let regularHours = 0, overtimeHours = 0, doubleTimeHours = 0, statHolidayHours = 0;
             
